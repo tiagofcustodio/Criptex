@@ -10,11 +10,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+if IS_FROZEN:
+    PROJECT_DIR = Path(sys.executable).resolve().parent
+else:
+    PROJECT_DIR = Path(__file__).resolve().parent
 
 
 def ensure_dependencies() -> None:
-    """Garante que todas as dependências do requirements.txt estão instaladas."""
+    """Garante que todas as dependências do requirements.txt estão instaladas (apenas em modo código-fonte)."""
+    if IS_FROZEN:
+        return
     try:
         import cryptography  # noqa: F401
         import PIL  # noqa: F401
@@ -33,9 +39,12 @@ def request_admin_elevation() -> None:
         return
     try:
         if not ctypes.windll.shell32.IsUserAnAdmin():
-            script_path = str(Path(__file__).resolve())
             extra_args = [f'"{arg}"' for arg in sys.argv[1:] if arg != "--elevate"]
-            params = " ".join([f'"{script_path}"'] + extra_args)
+            if IS_FROZEN:
+                params = " ".join(extra_args)
+            else:
+                script_path = str(Path(__file__).resolve())
+                params = " ".join([f'"{script_path}"'] + extra_args)
             ret = ctypes.windll.shell32.ShellExecuteW(
                 None,
                 "runas",
@@ -44,7 +53,6 @@ def request_admin_elevation() -> None:
                 str(PROJECT_DIR),
                 1,
             )
-            # ShellExecuteW retorna > 32 se a elevação foi aceite pelo utilizador
             if int(ret) > 32:
                 sys.exit(0)
             else:
@@ -55,7 +63,7 @@ def request_admin_elevation() -> None:
 
 def main() -> int:
     os.chdir(PROJECT_DIR)
-    if str(PROJECT_DIR) not in sys.path:
+    if not IS_FROZEN and str(PROJECT_DIR) not in sys.path:
         sys.path.insert(0, str(PROJECT_DIR))
 
     parser = argparse.ArgumentParser(

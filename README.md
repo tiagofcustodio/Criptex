@@ -27,19 +27,21 @@ Aplicação nativa para Windows (**Python + PyQt6 + Win32 APIs**) concebida como
 
 ---
 
-## Como Executar (Após Download / Clone do GitHub)
+## Como Executar (Sem Precisar de Python ou via Código-Fonte)
 
-1. Certifique-se de que tem o **Python 3.10+** instalado no Windows.
-2. Execute o lançador principal [Iniciar_Criptex.bat](Iniciar_Criptex.bat):
+### Opção 1: Executável Autónomo (`Criptex.exe` — Recomendado)
+Basta fazer duplo clique em **`Criptex.exe`** (ou em [Iniciar_Criptex.bat](Iniciar_Criptex.bat)).
+- **Não precisa de ter Python instalado** nem `.venv` — o `Criptex.exe` já inclui o Python, `PyQt6`, `cryptography`, `qrcode`, `psutil` e o manifesto de Administrador UAC embutidos.
 
+### Opção 2: A partir do Código-Fonte ([Iniciar_Criptex.bat](Iniciar_Criptex.bat))
 ```bat
 Iniciar_Criptex.bat
 ```
+- Se o `Criptex.exe` estiver na pasta, arranca-o imediatamente.
+- Caso esteja apenas com o código-fonte num computador **sem Python instalado**, o `Iniciar_Criptex.bat` instala automaticamente o **Python 3.12** via `winget` (`winget install -e --id Python.Python.3.12`), cria o `.venv` e instala as dependências de `requirements.txt`.
 
-> No **primeiro arranque** após extrair do GitHub, o `Iniciar_Criptex.bat` cria automaticamente o ambiente virtual `.venv`, instala todas as dependências de `requirements.txt` e inicia o Criptex solicitando elevação UAC de Administrador.
-
-Ou diretamente via terminal:
-
-```powershell
-python main.py --elevate
+### Recompilar o Executável (`Criptex.exe`)
+Para gerar novamente o `Criptex.exe` após alterações ao código:
+```bat
+Gerar_Executavel_Criptex.bat
 ```

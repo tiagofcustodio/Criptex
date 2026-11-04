@@ -16,7 +16,8 @@ __pycache__/
 *.crpxkey
 *.crpxv
 
-# OS / IDE artifacts
+# OS / IDE / PyInstaller temporary build artifacts
+build/
 .DS_Store
 Thumbs.db
 .vscode/
