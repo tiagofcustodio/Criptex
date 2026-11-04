@@ -27,16 +27,19 @@ Aplicação nativa para Windows (**Python + PyQt6 + Win32 APIs**) concebida como
 
 ---
 
-## Como Executar
+## Como Executar (Após Download / Clone do GitHub)
 
-Execute o lançador principal (solicita elevação UAC de Administrador para permitir o controlo físico das placas de rede):
+1. Certifique-se de que tem o **Python 3.10+** instalado no Windows.
+2. Execute o lançador principal [Iniciar_Criptex.bat](Iniciar_Criptex.bat):
 
 ```bat
 Iniciar_Criptex.bat
 ```
 
-Ou diretamente via linha de comandos:
+> No **primeiro arranque** após extrair do GitHub, o `Iniciar_Criptex.bat` cria automaticamente o ambiente virtual `.venv`, instala todas as dependências de `requirements.txt` e inicia o Criptex solicitando elevação UAC de Administrador.
+
+Ou diretamente via terminal:
 
 ```powershell
-.\.venv\Scripts\python.exe main.py --elevate
+python main.py --elevate
 ```
