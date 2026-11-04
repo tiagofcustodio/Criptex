@@ -1,0 +1,23 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Criptex local vault data, keys & TLS certificates (never commit secrets)
+.criptex_vault/
+.simulated_usb_drive/
+*.crpxkey
+*.crpxv
+
+# OS / IDE artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
