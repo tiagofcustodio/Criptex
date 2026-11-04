@@ -251,11 +251,7 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
       A verificar vínculo do dispositivo...
     </div>
 
-    <div class="scanner-wrap" id="scannerWrap"
-         onpointerdown="startHoldScan(event)"
-         onpointerup="cancelHoldScan(event)"
-         onpointerleave="cancelHoldScan(event)"
-         onpointercancel="cancelHoldScan(event)">
+    <div class="scanner-wrap" id="scannerWrap" onclick="triggerBiometricUnlock()">
       <svg class="scanner-svg" viewBox="0 0 132 132">
         <circle class="ring-bg" cx="66" cy="66" r="60"></circle>
         <circle class="ring-progress" id="ringProgress" cx="66" cy="66" r="60"></circle>
@@ -276,15 +272,15 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="scan-hint" id="scanHint">
-      Pressione o sensor biométrico ou clique no botão abaixo
+      Toque no ícone de Impressão Digital ou no botão abaixo para abrir o sensor biométrico real do seu telemóvel
     </div>
 
     <button class="btn-bio" id="mainBtn" onclick="triggerBiometricUnlock()">
-      Validar Biometria e Desbloquear Cofre
+      Autenticar com Impressão Digital / FaceID
     </button>
 
     <div class="status-box" id="statusBox">
-      Pronto. Aguardando validação biométrica no smartphone...
+      Pronto. Toque no botão acima para ativar o leitor de Impressão Digital / FaceID do telemóvel.
     </div>
 
     <div class="meta-info">
@@ -409,141 +405,127 @@ function setRingProgress(pct) {
   circle.style.strokeDashoffset = offset;
 }
 
-let holdTimer = null;
-let holdProgress = 0;
 let isUnlocked = false;
-
-function startHoldScan(ev) {
-  if (ev) ev.preventDefault();
-  if (isUnlocked || holdTimer) return;
-
-  const wrap = document.getElementById("scannerWrap");
-  wrap.classList.add("scanning");
-  holdProgress = 0;
-  setStatus("A ler impressão digital / identidade biométrica do dispositivo...", "");
-  if (navigator.vibrate) {
-    try { navigator.vibrate(35); } catch (e) {}
-  }
-
-  holdTimer = setInterval(() => {
-    holdProgress += 10;
-    setRingProgress(Math.min(100, holdProgress));
-    if (holdProgress >= 100) {
-      clearInterval(holdTimer);
-      holdTimer = null;
-      if (navigator.vibrate) {
-        try { navigator.vibrate([50, 40, 90]); } catch (e) {}
-      }
-      triggerBiometricUnlock();
-    }
-  }, 55);
-}
-
-function cancelHoldScan(ev) {
-  if (holdTimer) {
-    clearInterval(holdTimer);
-    holdTimer = null;
-  }
-  if (!isUnlocked) {
-    document.getElementById("scannerWrap").classList.remove("scanning");
-    setRingProgress(0);
-  }
-}
 
 function isIpHostname(host) {
   return /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(":");
 }
 
+// Se o utilizador abriu via IP local antes do túnel HTTPS WebAuthn terminar de ligar,
+// redireciona automaticamente para o domínio HTTPS válido para ativar o leitor de Impressão Digital nativo.
+if (isIpHostname(window.location.hostname)) {
+  setStatus("A sincronizar canal seguro WebAuthn para ativar o sensor de Impressão Digital do telemóvel...", "");
+  const tunnelPoll = setInterval(async () => {
+    try {
+      const r = await fetch("/api/tunnel_status", { cache: "no-store" });
+      const d = await r.json();
+      if (d && d.tunnel_url) {
+        clearInterval(tunnelPoll);
+        window.location.replace(d.tunnel_url);
+      }
+    } catch (e) {}
+  }, 1000);
+}
+
 async function triggerBiometricUnlock() {
   if (isUnlocked) return;
   const btn = document.getElementById("mainBtn");
-  btn.disabled = true;
-  setRingProgress(65);
-  setStatus("A validar credencial biométrica do smartphone...", "");
+  const wrap = document.getElementById("scannerWrap");
 
-  // 1. Se estivermos num domínio compatível com WebAuthn (não IP puro) e suportado pelo browser:
-  const canTryWebAuthn = Boolean(
-    window.PublicKeyCredential &&
-    window.isSecureContext &&
-    !isIpHostname(window.location.hostname)
-  );
-
-  if (canTryWebAuthn) {
+  if (isIpHostname(window.location.hostname)) {
     try {
-      setStatus("Toque no sensor de Impressão Digital / FaceID do seu telemóvel...", "");
-      const challengeBytes = b64urlToUint8Array(CHALLENGE_B64);
-      const userId = new Uint8Array(16);
-      window.crypto.getRandomValues(userId);
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge: challengeBytes,
-          rp: { name: "Criptex Vault Windows" },
-          user: {
-            id: userId,
-            name: "criptex-owner@vault.local",
-            displayName: "Autenticação Biométrica Criptex"
-          },
-          pubKeyCredParams: [
-            { type: "public-key", alg: -7 },
-            { type: "public-key", alg: -257 }
-          ],
-          authenticatorSelection: {
-            authenticatorAttachment: "platform",
-            userVerification: "required"
-          },
-          timeout: 60000,
-          attestation: "none"
-        }
-      });
-      const pubKeyBuffer = cred.response.getPublicKey ? cred.response.getPublicKey() : null;
-      const pubKeyAlg = cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7;
-      await sendVerification({
-        mode: "webauthn_register",
-        session_token: SESSION_TOKEN,
-        credential_id: bufferToB64url(cred.rawId),
-        client_data_json: bufferToB64url(cred.response.clientDataJSON),
-        attestation_object: bufferToB64url(cred.response.attestationObject),
-        public_key_spki: pubKeyBuffer ? bufferToB64url(pubKeyBuffer) : "",
-        algorithm: pubKeyAlg,
-        device_token: getOrCreateDeviceToken(),
-        hw_signature: getHardwareSignature(),
-        user_agent: navigator.userAgent
-      });
-      btn.disabled = false;
-      return;
-    } catch (webauthnErr) {
-      if (webauthnErr && (webauthnErr.name === "NotAllowedError" || webauthnErr.name === "AbortError")) {
-        setRingProgress(0);
-        document.getElementById("scannerWrap").classList.remove("scanning");
-        setStatus("Leitura biométrica cancelada ou não reconhecida no sensor do smartphone. Tente novamente.", "err");
-        btn.disabled = false;
+      const r = await fetch("/api/tunnel_status", { cache: "no-store" });
+      const d = await r.json();
+      if (d && d.tunnel_url) {
+        window.location.replace(d.tunnel_url);
         return;
       }
-      console.log("Transição automática para assinatura criptográfica móvel:", webauthnErr);
-    }
+    } catch (e) {}
+    setStatus(
+      "O navegador móvel exige um domínio HTTPS WebAuthn para abrir o sensor físico de Impressão Digital. " +
+      "Aguarde 2 segundos ou leia o QR Code atualizado no ecrã do PC.",
+      "err"
+    );
+    return;
   }
 
-  // 2. Validação Criptográfica Direta do Dispositivo Móvel (funciona em qualquer IP local 192.168.x.x)
-  await triggerSignedHandshake();
-  btn.disabled = false;
-}
+  if (!window.PublicKeyCredential || !navigator.credentials || !navigator.credentials.create) {
+    setStatus(
+      "Este navegador não suporta o sensor biométrico WebAuthn (Impressão Digital / FaceID). Abra o link no Chrome (Android) ou Safari (iOS).",
+      "err"
+    );
+    return;
+  }
 
-async function triggerSignedHandshake() {
+  btn.disabled = true;
+  wrap.classList.add("scanning");
+  setRingProgress(60);
+  setStatus("Coloque o dedo no sensor de Impressão Digital (ou confirme o FaceID) no seu telemóvel...", "");
+
   try {
-    const devToken = getOrCreateDeviceToken();
-    const payload = {
-      mode: "mobile_signed_token",
+    const challengeBytes = b64urlToUint8Array(CHALLENGE_B64);
+    const userId = new Uint8Array(16);
+    window.crypto.getRandomValues(userId);
+
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: challengeBytes,
+        rp: {
+          name: "Criptex Security Suite",
+          id: window.location.hostname
+        },
+        user: {
+          id: userId,
+          name: "criptex-vault@criptex.local",
+          displayName: "Cofre Criptex Windows"
+        },
+        pubKeyCredParams: [
+          { type: "public-key", alg: -7 },
+          { type: "public-key", alg: -257 }
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",
+          residentKey: "preferred",
+          userVerification: "required"
+        },
+        timeout: 60000,
+        attestation: "none"
+      }
+    });
+
+    const pubKeyBuffer = cred.response.getPublicKey ? cred.response.getPublicKey() : null;
+    const pubKeyAlg = cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7;
+    await sendVerification({
+      mode: "webauthn_register",
       session_token: SESSION_TOKEN,
-      challenge_b64: CHALLENGE_B64,
-      device_token: devToken,
+      credential_id: bufferToB64url(cred.rawId),
+      client_data_json: bufferToB64url(cred.response.clientDataJSON),
+      attestation_object: bufferToB64url(cred.response.attestationObject),
+      public_key_spki: pubKeyBuffer ? bufferToB64url(pubKeyBuffer) : "",
+      algorithm: pubKeyAlg,
+      device_token: getOrCreateDeviceToken(),
       hw_signature: getHardwareSignature(),
-      user_agent: navigator.userAgent,
-      timestamp: Date.now()
-    };
-    await sendVerification(payload);
-  } catch (e) {
+      user_agent: navigator.userAgent
+    });
+  } catch (webauthnErr) {
     setRingProgress(0);
-    setStatus("Erro de comunicação com o PC: " + e.message, "err");
+    wrap.classList.remove("scanning");
+    const errName = webauthnErr && webauthnErr.name ? webauthnErr.name : "Erro";
+    if (errName === "NotAllowedError" || errName === "AbortError") {
+      setStatus(
+        "Leitura de Impressão Digital / FaceID cancelada ou recusada no telemóvel. É obrigatório validar a impressão digital real no sensor.",
+        "err"
+      );
+    } else {
+      setStatus(
+        "Falha ao aceder ao sensor biométrico do telemóvel (" + errName + "): " + (webauthnErr.message || webauthnErr),
+        "err"
+      );
+    }
+  } finally {
+    if (!isUnlocked) {
+      btn.disabled = false;
+    }
   }
 }
 
@@ -745,6 +727,77 @@ class SmartphoneBiometricServer:
                 continue
         raise RuntimeError(f"Não foi possível iniciar o servidor HTTPS biométrico: {last_err}")
 
+    def _bind_plain_http_port(self, handler_cls) -> ReusableThreadingHTTPServer:
+        """Inicia listener HTTP local (127.0.0.1) para alimentar o túnel HTTPS WebAuthn."""
+        for p in (8440, 8441, 8442, 0):
+            try:
+                return ReusableThreadingHTTPServer(("127.0.0.1", p), handler_cls)
+            except OSError:
+                continue
+        raise RuntimeError("Não foi possível abrir porta local para o túnel WebAuthn.")
+
+    def _start_webauthn_https_tunnel(self) -> None:
+        """
+        Estabelece túnel HTTPS com certificado válido (Let's Encrypt via localhost.run / OpenSSH nativo do Windows)
+        para que o navegador móvel (Chrome Android / Safari iOS) execute a API WebAuthn (`navigator.credentials.create`)
+        e acione obrigatoriamente o sensor físico de Impressão Digital / FaceID do telemóvel.
+        """
+        self._tunnel_ready_event = threading.Event()
+
+        def _tunnel_worker() -> None:
+            ssh_bin = r"C:\Windows\System32\OpenSSH\ssh.exe"
+            if not Path(ssh_bin).exists():
+                ssh_bin = "ssh"
+            cmd = [
+                ssh_bin,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=NUL",
+                "-o", "ServerAliveInterval=30",
+                "-o", "ConnectTimeout=6",
+                "-R", f"80:127.0.0.1:{self.http_plain_port}",
+                "nokey@localhost.run",
+            ]
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=creationflags,
+                )
+                self._tunnel_proc = proc
+                url_pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.lhr\.life")
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    if not self.is_running:
+                        break
+                    m = url_pattern.search(line)
+                    if m:
+                        found_url = m.group(0).rstrip("/")
+                        if found_url != self.tunnel_base_url:
+                            self.tunnel_base_url = found_url
+                            self._tunnel_ready_event.set()
+                            self.log(
+                                f"Canal HTTPS WebAuthn ativo ({found_url}) — Leitor real de Impressão Digital / FaceID pronto."
+                            )
+                            if self.on_qr_url_updated:
+                                try:
+                                    self.on_qr_url_updated(self.get_qr_url())
+                                except Exception:
+                                    pass
+            except Exception as e:
+                self._tunnel_ready_event.set()
+                self.log(f"Aviso ao criar túnel WebAuthn: {e}")
+
+        t = threading.Thread(target=_tunnel_worker, name="CriptexWebAuthnTunnel", daemon=True)
+        t.start()
+        if self.preferred_port != 0:
+            self._tunnel_ready_event.wait(timeout=3.5)
+
     def start(self) -> str:
         """Inicia o servidor HTTPS de autenticação biométrica e devolve o URL para o QR Code."""
         self.host_ip = self.detect_lan_ip()
@@ -782,11 +835,29 @@ class SmartphoneBiometricServer:
                 params = urllib.parse.parse_qs(parsed.query)
                 token = params.get("t", [""])[0]
 
+                if parsed.path == "/api/tunnel_status":
+                    tunnel_url = (
+                        f"{parent.tunnel_base_url}/auth?t={parent.session_token}"
+                        if parent.tunnel_base_url
+                        else ""
+                    )
+                    payload = json.dumps({"tunnel_url": tunnel_url}).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+
                 if parsed.path in ("/", "/auth"):
-                    # Aceita o QR Code atual ou redireciona suavemente para a sessão ativa
-                    if token and token != parent.session_token:
-                        # Atualizar automaticamente para o token ativo se o utilizador recarregou a página aberta no telemóvel
-                        pass
+                    host_hdr = self.headers.get("Host", "")
+                    if parent.tunnel_base_url and ".lhr.life" not in host_hdr:
+                        redirect_target = f"{parent.tunnel_base_url}/auth?t={parent.session_token}"
+                        self.send_response(302)
+                        self.send_header("Location", redirect_target)
+                        self.end_headers()
+                        return
 
                     meta = parent.vault_storage.load_meta()
                     bio = meta.get("biometric_device", {})
@@ -869,18 +940,19 @@ class SmartphoneBiometricServer:
         self._server_thread.start()
 
         # Também inicia listener HTTP local (127.0.0.1) para túnel HTTPS público WebAuthn sem aviso SSL
-        try:
-            self._http_plain_d = self._bind_plain_http_port(Handler)
-            self.http_plain_port = self._http_plain_d.server_address[1]
-            self._http_plain_thread = threading.Thread(
-                target=self._http_plain_d.serve_forever,
-                name="CriptexBiometricPlainHTTP",
-                daemon=True,
-            )
-            self._http_plain_thread.start()
-            self._start_webauthn_https_tunnel()
-        except Exception:
-            pass
+        if self.preferred_port != 0:
+            try:
+                self._http_plain_d = self._bind_plain_http_port(Handler)
+                self.http_plain_port = self._http_plain_d.server_address[1]
+                self._http_plain_thread = threading.Thread(
+                    target=self._http_plain_d.serve_forever,
+                    name="CriptexBiometricPlainHTTP",
+                    daemon=True,
+                )
+                self._http_plain_thread.start()
+                self._start_webauthn_https_tunnel()
+            except Exception:
+                pass
 
         self.log(f"Servidor Biométrico HTTPS ativo em https://{self.host_ip}:{self.port}")
         return self.get_qr_url()
@@ -889,6 +961,10 @@ class SmartphoneBiometricServer:
         self.is_running = False
         if self._tunnel_proc is not None:
             try:
+                if self._tunnel_proc.stdin:
+                    self._tunnel_proc.stdin.close()
+                if self._tunnel_proc.stdout:
+                    self._tunnel_proc.stdout.close()
                 self._tunnel_proc.terminate()
             except Exception:
                 pass
