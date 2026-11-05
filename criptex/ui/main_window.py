@@ -1,5 +1,5 @@
 # Criptex — Interface Gráfica Desktop Windows (PyQt6)
-# Tema Profissional Executivo de Cibersegurança (Enterprise Dark Slate & Titanium)
+# Tema Liquid Frosted Glass & Mint Spotlight (Smoky Translucent Glassmorphism)
 # Cofre Digital Altamente Fortificado com:
 #   - Cifra de Vigenère (Passwords & Ficheiros)
 #   - Palavra-Chave da Cifra guardada em Pen USB Física (.criptex_usb_key.crpxkey)
@@ -10,17 +10,30 @@
 
 from __future__ import annotations
 
+import ctypes
 import io
 import random
 import string
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import qrcode
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF
+from PyQt6.QtGui import (
+    QImage,
+    QPixmap,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QColor,
+    QLinearGradient,
+    QRadialGradient,
+    QPen,
+    QFont,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -55,190 +68,248 @@ from criptex.vault.storage import CriptexVaultStorage, PasswordEntry, VaultFileE
 
 ENTERPRISE_SECURITY_QSS = """
 QMainWindow, QDialog {
-    background-color: #0d1117;
-    color: #e6edf3;
-    font-family: "Segoe UI", sans-serif;
+    background-color: #161311;
+    color: #f4f1ee;
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
 }
 QWidget {
-    color: #e6edf3;
-    font-family: "Segoe UI", sans-serif;
+    color: #f4f1ee;
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
 }
 QFrame#TopHeaderBar {
-    background-color: #161b22;
-    border-bottom: 1px solid #30363d;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(48, 42, 38, 0.72),
+        stop:0.5 rgba(34, 30, 28, 0.66),
+        stop:1 rgba(48, 42, 38, 0.72)
+    );
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 QFrame#Card {
-    background-color: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 6px;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(56, 49, 45, 0.64),
+        stop:0.5 rgba(36, 32, 30, 0.56),
+        stop:1 rgba(26, 23, 22, 0.68)
+    );
+    border-top: 1px solid rgba(255, 255, 255, 0.28);
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+    border-bottom: 1px solid rgba(94, 252, 232, 0.20);
+    border-radius: 22px;
 }
 QFrame#SubPanel {
-    background-color: #0d1117;
-    border: 1px solid #21262d;
-    border-left: 3px solid #2f81f7;
-    border-radius: 4px;
+    background-color: rgba(20, 18, 17, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-left: 3px solid #5efce8;
+    border-radius: 14px;
 }
 QFrame#ShieldBanner {
-    background-color: #161b22;
-    border: 1px solid #30363d;
-    border-left: 4px solid #238636;
-    border-radius: 6px;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(46, 41, 38, 0.72),
+        stop:0.5 rgba(32, 38, 37, 0.66),
+        stop:1 rgba(44, 39, 36, 0.72)
+    );
+    border-top: 1px solid rgba(255, 255, 255, 0.26);
+    border-bottom: 1px solid rgba(94, 252, 232, 0.32);
+    border-left: 1px solid rgba(255, 255, 255, 0.20);
+    border-right: 1px solid rgba(255, 255, 255, 0.20);
+    border-radius: 22px;
 }
 QFrame#WarningCipherBanner {
-    background-color: #281216;
-    border: 1px solid #da3633;
-    border-left: 4px solid #f85149;
-    border-radius: 6px;
+    background-color: rgba(68, 22, 28, 0.68);
+    border: 1px solid rgba(255, 123, 114, 0.45);
+    border-left: 4px solid #ff7b72;
+    border-radius: 18px;
 }
 QLabel#HeroTitle {
-    font-size: 21px;
+    font-size: 23px;
     font-weight: 700;
-    color: #f0f6fc;
-    letter-spacing: 0.8px;
+    color: #ffffff;
+    letter-spacing: 0.9px;
 }
 QLabel#SectionTitle {
     font-size: 13px;
     font-weight: 700;
-    color: #c9d1d9;
-    letter-spacing: 0.3px;
+    color: #f3efeb;
+    letter-spacing: 0.4px;
 }
 QLabel#Subtle {
-    color: #8b949e;
+    color: rgba(235, 228, 220, 0.72);
     font-size: 12px;
 }
 QLineEdit, QPlainTextEdit, QComboBox {
-    background-color: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 5px;
-    padding: 8px 11px;
-    color: #f0f6fc;
+    background-color: rgba(18, 16, 15, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 13px;
+    padding: 8px 13px;
+    color: #ffffff;
     font-size: 13px;
 }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
-    border: 1px solid #2f81f7;
-    background-color: #090d11;
+    border: 1px solid #5efce8;
+    background-color: rgba(14, 24, 23, 0.72);
 }
 QComboBox::drop-down {
-    border-left: 1px solid #30363d;
-    width: 24px;
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+    width: 26px;
+}
+QComboBox QAbstractItemView {
+    background-color: #221e1c;
+    border: 1px solid rgba(94, 252, 232, 0.35);
+    selection-background-color: rgba(94, 252, 232, 0.22);
+    selection-color: #5efce8;
+    color: #f4f1ee;
 }
 QPushButton {
-    background-color: #21262d;
-    border: 1px solid #30363d;
-    border-radius: 5px;
-    padding: 8px 14px;
-    color: #c9d1d9;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(255, 255, 255, 0.13),
+        stop:1 rgba(255, 255, 255, 0.05)
+    );
+    border-top: 1px solid rgba(255, 255, 255, 0.28);
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 15px;
+    padding: 8px 16px;
+    color: #f4f1ee;
     font-weight: 600;
     font-size: 12px;
 }
 QPushButton:hover {
-    background-color: #30363d;
-    border-color: #8b949e;
-    color: #f0f6fc;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(94, 252, 232, 0.24),
+        stop:1 rgba(45, 212, 191, 0.10)
+    );
+    border: 1px solid #5efce8;
+    color: #ffffff;
 }
 QPushButton:disabled {
-    background-color: #161b22;
-    color: #484f58;
-    border-color: #21262d;
+    background-color: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.30);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 QPushButton#PrimaryBtn {
-    background-color: #1f6feb;
-    border: 1px solid #388bfd;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(94, 252, 232, 0.36),
+        stop:0.5 rgba(20, 184, 166, 0.28),
+        stop:1 rgba(15, 118, 110, 0.44)
+    );
+    border-top: 1px solid #86ffef;
+    border-left: 1px solid #5efce8;
+    border-right: 1px solid #5efce8;
+    border-bottom: 1px solid #2dd4bf;
+    border-radius: 17px;
     color: #ffffff;
     font-weight: 700;
 }
 QPushButton#PrimaryBtn:hover {
-    background-color: #388bfd;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(94, 252, 232, 0.50),
+        stop:1 rgba(20, 184, 166, 0.38)
+    );
+    border: 1px solid #a7fff4;
 }
 QPushButton#PrimaryBtn:disabled {
-    background-color: #161b22;
-    border: 1px solid #21262d;
-    color: #484f58;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.32);
 }
 QPushButton#SecondaryAccentBtn {
-    background-color: #1f242c;
-    border: 1px solid #388bfd;
-    color: #58a6ff;
+    background-color: rgba(94, 252, 232, 0.12);
+    border: 1px solid rgba(94, 252, 232, 0.45);
+    border-radius: 15px;
+    color: #5efce8;
     font-weight: 600;
 }
 QPushButton#SecondaryAccentBtn:hover {
-    background-color: #262c36;
+    background-color: rgba(94, 252, 232, 0.22);
 }
 QPushButton#DangerBtn {
-    background-color: #21262d;
-    border: 1px solid #da3633;
-    color: #f85149;
+    background-color: rgba(248, 81, 73, 0.14);
+    border: 1px solid rgba(255, 123, 114, 0.45);
+    border-radius: 15px;
+    color: #ffa198;
     font-weight: 600;
 }
 QPushButton#DangerBtn:hover {
-    background-color: #da3633;
+    background-color: rgba(218, 54, 51, 0.48);
+    border: 1px solid #ff7b72;
     color: #ffffff;
 }
 QTabWidget::pane {
-    border: 1px solid #30363d;
-    background-color: #0d1117;
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.20);
+    background-color: rgba(30, 27, 25, 0.54);
+    border-radius: 22px;
 }
 QTabBar::tab {
-    background-color: #161b22;
-    color: #8b949e;
-    padding: 9px 18px;
-    margin-right: 4px;
-    border: 1px solid #30363d;
-    border-bottom: none;
-    border-top-left-radius: 5px;
-    border-top-right-radius: 5px;
+    background-color: rgba(42, 37, 34, 0.62);
+    color: rgba(244, 241, 238, 0.68);
+    padding: 10px 20px;
+    margin-right: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
     font-weight: 600;
     font-size: 12px;
 }
 QTabBar::tab:selected {
-    background-color: #0d1117;
-    color: #f0f6fc;
-    border-top: 2px solid #2f81f7;
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(94, 252, 232, 0.34),
+        stop:1 rgba(38, 34, 32, 0.72)
+    );
+    color: #ffffff;
+    border-top: 2px solid #5efce8;
+    border-bottom: 1px solid #5efce8;
 }
 QTableWidget {
-    background-color: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 5px;
-    gridline-color: #21262d;
-    selection-background-color: #1f2937;
-    selection-color: #58a6ff;
+    background-color: rgba(18, 16, 15, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
+    gridline-color: rgba(255, 255, 255, 0.08);
+    selection-background-color: rgba(94, 252, 232, 0.20);
+    selection-color: #5efce8;
     font-size: 12px;
 }
 QHeaderView::section {
-    background-color: #161b22;
-    color: #8b949e;
+    background-color: rgba(46, 40, 37, 0.72);
+    color: rgba(244, 241, 238, 0.80);
     padding: 8px;
     border: none;
-    border-right: 1px solid #21262d;
-    border-bottom: 1px solid #30363d;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
     font-weight: 600;
     font-size: 12px;
 }
 QListWidget {
-    background-color: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 5px;
-    padding: 6px;
+    background-color: rgba(18, 16, 15, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
+    padding: 8px;
     font-family: "Consolas", monospace;
     font-size: 12px;
-    color: #c9d1d9;
+    color: #e8e2dc;
 }
 QCheckBox {
     font-size: 12px;
-    color: #c9d1d9;
+    color: #e8e2dc;
     spacing: 8px;
 }
 QCheckBox::indicator {
-    width: 15px;
-    height: 15px;
-    border: 1px solid #30363d;
-    border-radius: 3px;
-    background-color: #0d1117;
+    width: 16px;
+    height: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 5px;
+    background-color: rgba(18, 16, 15, 0.60);
 }
 QCheckBox::indicator:checked {
-    background-color: #1f6feb;
-    border: 1px solid #388bfd;
+    background-color: #2dd4bf;
+    border: 1px solid #5efce8;
 }
 """
 
@@ -350,6 +421,222 @@ class ScrambledVirtualKeypadDialog(QDialog):
         return self.preview_edit.text()
 
 
+class GlassSpotlightNavBar(QWidget):
+    """
+    Barra de navegação flutuante em vidro fumado ('Smoky Liquid Glass') inspirada no design de referência:
+      - Cápsula translúcida com borda especular de vidro ('specular rim light')
+      - Feixe de luz cónico superior ('Mint-Cyan Spotlight Cone' #5efce8) sobre o separador ativo
+      - Halo circular esmeralda-menta e contorno néon suave
+    """
+
+    tabSelected = pyqtSignal(int)
+
+    def __init__(self, items: List[Tuple[str, str]], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._items = items  # [(icon_kind, label), ...]
+        self._active_index = 0
+        self._hover_index = -1
+        self.setFixedHeight(74)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_active_index(self, index: int) -> None:
+        if 0 <= index < len(self._items) and index != self._active_index:
+            self._active_index = index
+            self.update()
+
+    def _index_at_pos(self, x: float) -> int:
+        w = max(1.0, float(self.width() - 32))
+        rel_x = x - 16.0
+        if rel_x < 0 or rel_x > w or not self._items:
+            return -1
+        slot_w = w / len(self._items)
+        idx = int(rel_x // slot_w)
+        return max(0, min(len(self._items) - 1, idx))
+
+    def mouseMoveEvent(self, event) -> None:
+        idx = self._index_at_pos(event.position().x())
+        if idx != self._hover_index:
+            self._hover_index = idx
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover_index = -1
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            idx = self._index_at_pos(event.position().x())
+            if idx >= 0:
+                self._active_index = idx
+                self.tabSelected.emit(idx)
+                self.update()
+        super().mousePressEvent(event)
+
+    def _draw_vector_icon(
+        self, painter: QPainter, kind: str, cx: float, cy: float, color: QColor
+    ) -> None:
+        pen = QPen(color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if kind == "passwords":
+            # Ícone de Cadeado / Cofre
+            body = QRectF(cx - 7.5, cy - 1.0, 15.0, 11.0)
+            painter.drawRoundedRect(body, 3.0, 3.0)
+            shackle = QPainterPath()
+            shackle.moveTo(cx - 4.5, cy - 1.0)
+            shackle.lineTo(cx - 4.5, cy - 4.5)
+            shackle.arcTo(QRectF(cx - 4.5, cy - 9.0, 9.0, 9.0), 180, -180)
+            shackle.lineTo(cx + 4.5, cy - 1.0)
+            painter.drawPath(shackle)
+            painter.drawEllipse(QPointF(cx, cy + 4.2), 1.3, 1.3)
+        elif kind == "files":
+            # Ícone de Pasta Cifrada
+            path = QPainterPath()
+            path.moveTo(cx - 8.5, cy - 5.5)
+            path.lineTo(cx - 2.5, cy - 5.5)
+            path.lineTo(cx - 0.5, cy - 3.0)
+            path.lineTo(cx + 8.5, cy - 3.0)
+            path.lineTo(cx + 8.5, cy + 7.5)
+            path.lineTo(cx - 8.5, cy + 7.5)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.drawLine(QPointF(cx - 4.0, cy + 2.5), QPointF(cx + 4.0, cy + 2.5))
+        elif kind == "matrix":
+            # Ícone de Símbolo (+) / Matriz Vigenère em círculo luminoso
+            painter.drawEllipse(QPointF(cx, cy + 1.0), 8.2, 8.2)
+            painter.drawLine(QPointF(cx, cy - 3.2), QPointF(cx, cy + 5.2))
+            painter.drawLine(QPointF(cx - 4.2, cy + 1.0), QPointF(cx + 4.2, cy + 1.0))
+        elif kind == "shield":
+            # Ícone de Escudo de Isolamento
+            path = QPainterPath()
+            path.moveTo(cx, cy - 7.5)
+            path.lineTo(cx + 7.5, cy - 4.5)
+            path.quadTo(cx + 7.5, cy + 4.0, cx, cy + 8.5)
+            path.quadTo(cx - 7.5, cy + 4.0, cx - 7.5, cy - 4.5)
+            path.closeSubpath()
+            painter.drawPath(path)
+        else:
+            # Ícone de Dispositivo / Utilizador Biométrico
+            painter.drawEllipse(QPointF(cx, cy - 3.5), 3.6, 3.6)
+            arc = QPainterPath()
+            arc.moveTo(cx - 7.2, cy + 7.5)
+            arc.quadTo(cx, cy + 1.2, cx + 7.2, cy + 7.5)
+            painter.drawPath(arc)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = QRectF(14.0, 5.0, float(self.width() - 28), float(self.height() - 10))
+        radius = rect.height() / 2.0
+
+        # 1. Corpo da cápsula em vidro fumado ('Smoky Frosted Glass')
+        pill_path = QPainterPath()
+        pill_path.addRoundedRect(rect, radius, radius)
+
+        bg_grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        bg_grad.setColorAt(0.0, QColor(62, 54, 49, 198))
+        bg_grad.setColorAt(0.48, QColor(38, 33, 30, 182))
+        bg_grad.setColorAt(1.0, QColor(24, 21, 19, 212))
+        painter.fillPath(pill_path, bg_grad)
+
+        # Brilho especular superior interno ('Top Glass Specular Highlight')
+        top_shine = QLinearGradient(rect.topLeft(), QPointF(rect.left(), rect.top() + 18.0))
+        top_shine.setColorAt(0.0, QColor(255, 255, 255, 42))
+        top_shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.save()
+        painter.setClipPath(pill_path)
+        painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(), 18.0), top_shine)
+
+        n = max(1, len(self._items))
+        slot_w = rect.width() / n
+
+        # 2. Feixe de Luz Cónico ('Mint-Cyan Spotlight Cone') + Halo sobre o item ativo
+        active_cx = rect.left() + (self._active_index + 0.5) * slot_w
+        cone_poly = QPolygonF(
+            [
+                QPointF(active_cx - 19.0, rect.top() + 1.0),
+                QPointF(active_cx + 19.0, rect.top() + 1.0),
+                QPointF(active_cx + slot_w * 0.42, rect.bottom() - 1.0),
+                QPointF(active_cx - slot_w * 0.42, rect.bottom() - 1.0),
+            ]
+        )
+        cone_grad = QLinearGradient(QPointF(active_cx, rect.top()), QPointF(active_cx, rect.bottom()))
+        cone_grad.setColorAt(0.0, QColor(94, 252, 232, 92))
+        cone_grad.setColorAt(0.55, QColor(45, 212, 191, 34))
+        cone_grad.setColorAt(1.0, QColor(45, 212, 191, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(cone_grad)
+        painter.drawPolygon(cone_poly)
+
+        # Halo circular esmeralda-menta atrás do ícone ativo
+        orb_grad = QRadialGradient(QPointF(active_cx, rect.top() + 24.0), 26.0)
+        orb_grad.setColorAt(0.0, QColor(94, 252, 232, 76))
+        orb_grad.setColorAt(0.65, QColor(20, 184, 166, 26))
+        orb_grad.setColorAt(1.0, QColor(20, 184, 166, 0))
+        painter.setBrush(orb_grad)
+        painter.drawEllipse(QPointF(active_cx, rect.top() + 24.0), 26.0, 26.0)
+
+        # Emissor luminoso superior ('Mint Spotlight Emitter Bar')
+        emitter_rect = QRectF(active_cx - 20.0, rect.top() + 0.5, 40.0, 3.6)
+        painter.setBrush(QColor(94, 252, 232, 245))
+        painter.drawRoundedRect(emitter_rect, 1.8, 1.8)
+
+        # Contorno néon inferior sob o item ativo
+        bottom_glow_rect = QRectF(active_cx - slot_w * 0.30, rect.bottom() - 2.6, slot_w * 0.60, 2.4)
+        painter.setBrush(QColor(94, 252, 232, 215))
+        painter.drawRoundedRect(bottom_glow_rect, 1.2, 1.2)
+        painter.restore()
+
+        # 3. Borda especular de vidro em redor da cápsula
+        rim_grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
+        rim_grad.setColorAt(0.0, QColor(255, 255, 255, 95))
+        rim_grad.setColorAt(0.5, QColor(255, 255, 255, 42))
+        rim_grad.setColorAt(1.0, QColor(94, 252, 232, 88))
+        painter.setPen(QPen(rim_grad, 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(pill_path)
+
+        # 4. Desenhar ícones e legendas de cada separador
+        font = QFont("Segoe UI Variable Display", 9)
+        for idx, (icon_kind, label) in enumerate(self._items):
+            cx = rect.left() + (idx + 0.5) * slot_w
+            icon_cy = rect.top() + 22.0
+            is_active = idx == self._active_index
+            is_hover = idx == self._hover_index
+
+            if is_active:
+                # Círculo de vidro esmeralda no ícone ativo
+                painter.setPen(QPen(QColor(94, 252, 232, 185), 1.2))
+                painter.setBrush(QColor(22, 66, 60, 145))
+                painter.drawEllipse(QPointF(cx, icon_cy + 1.0), 14.5, 14.5)
+                icon_color = QColor(255, 255, 255, 255)
+                text_color = QColor(255, 255, 255, 255)
+                font.setWeight(QFont.Weight.Bold)
+            elif is_hover:
+                painter.setPen(QPen(QColor(255, 255, 255, 60), 1.0))
+                painter.setBrush(QColor(255, 255, 255, 22))
+                painter.drawEllipse(QPointF(cx, icon_cy + 1.0), 13.5, 13.5)
+                icon_color = QColor(94, 252, 232, 235)
+                text_color = QColor(244, 241, 238, 235)
+                font.setWeight(QFont.Weight.DemiBold)
+            else:
+                icon_color = QColor(240, 235, 230, 185)
+                text_color = QColor(235, 228, 220, 175)
+                font.setWeight(QFont.Weight.Medium)
+
+            self._draw_vector_icon(painter, icon_kind, cx, icon_cy, icon_color)
+
+            painter.setFont(font)
+            painter.setPen(text_color)
+            lbl_rect = QRectF(cx - slot_w * 0.48, rect.top() + 39.0, slot_w * 0.96, 20.0)
+            painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignCenter), label)
+
+
 class BridgeSignals(QObject):
     biometricVerified = pyqtSignal(object)
     qrUrlUpdated = pyqtSignal(str)
@@ -362,6 +649,7 @@ class CriptexMainWindow(QMainWindow):
         self.setWindowTitle("Criptex")
         self.resize(1280, 840)
         self.setStyleSheet(ENTERPRISE_SECURITY_QSS)
+        self._apply_windows_dwm_glass()
 
         self.signals = BridgeSignals()
         self.signals.biometricVerified.connect(self._on_biometric_verified_ui)
@@ -385,7 +673,7 @@ class CriptexMainWindow(QMainWindow):
         self.last_bio_result: Optional[BiometricAuthResult] = None
         self._detected_drives: List[UsbDriveInfo] = []
 
-        # Contentor Principal com Barra Superior Discreta e Profissional
+        # Contentor Principal com Barra Superior em Vidro Fumado
         master_widget = QWidget()
         master_layout = QVBoxLayout(master_widget)
         master_layout.setContentsMargins(0, 0, 0, 0)
@@ -393,14 +681,14 @@ class CriptexMainWindow(QMainWindow):
 
         top_bar = QFrame()
         top_bar.setObjectName("TopHeaderBar")
-        top_bar.setFixedHeight(36)
+        top_bar.setFixedHeight(38)
         tb_layout = QHBoxLayout(top_bar)
-        tb_layout.setContentsMargins(20, 0, 20, 0)
+        tb_layout.setContentsMargins(22, 0, 22, 0)
 
-        lbl_brand = QLabel("Criptex Security Suite  |  Cofre de Passwords e Ficheiros")
-        lbl_brand.setStyleSheet("font-size: 12px; font-weight: 600; color: #c9d1d9;")
+        lbl_brand = QLabel("Criptex Security Suite  •  Liquid Glass Edition")
+        lbl_brand.setStyleSheet("font-size: 12px; font-weight: 600; color: #f4f1ee; letter-spacing: 0.4px;")
         self.lbl_header_status = QLabel("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256")
-        self.lbl_header_status.setStyleSheet("font-size: 12px; color: #8b949e;")
+        self.lbl_header_status.setStyleSheet("font-size: 12px; color: #5efce8;")
         tb_layout.addWidget(lbl_brand)
         tb_layout.addStretch()
         tb_layout.addWidget(self.lbl_header_status)
@@ -420,6 +708,58 @@ class CriptexMainWindow(QMainWindow):
         self.telemetry_timer = QTimer(self)
         self.telemetry_timer.timeout.connect(self._on_periodic_tick)
         self.telemetry_timer.start(1500)
+
+    def _apply_windows_dwm_glass(self) -> None:
+        """Ativa barra de título escura imersiva e efeito Acrylic/Mica do Windows 11 DWM."""
+        if sys.platform != "win32":
+            return
+        try:
+            hwnd = int(self.winId())
+            dwmapi = ctypes.windll.dwmapi
+            dark_mode = ctypes.c_int(1)
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+            # DWMWA_SYSTEMBACKDROP_TYPE = 38 (3 = DWMSBT_TRANSIENTWINDOW Acrylic, 2 = Mica)
+            backdrop_type = ctypes.c_int(3)
+            dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(backdrop_type), ctypes.sizeof(backdrop_type))
+        except Exception:
+            pass
+
+    def paintEvent(self, event) -> None:
+        """
+        Desenha o fundo arquitetónico difuso ('Warm Espresso & Mint Bokeh Backdrop')
+        para que os cartões e cápsulas de vidro fumado translúcido tenham profundidade real.
+        """
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w = float(self.width())
+        h = float(self.height())
+
+        base_grad = QLinearGradient(0.0, 0.0, w, h)
+        base_grad.setColorAt(0.0, QColor(20, 17, 15))
+        base_grad.setColorAt(0.45, QColor(28, 23, 20))
+        base_grad.setColorAt(1.0, QColor(15, 19, 19))
+        painter.fillRect(self.rect(), base_grad)
+
+        # Esfera difusa quente âmbar/madeira (como o ambiente da imagem de referência)
+        warm_orb = QRadialGradient(QPointF(w * 0.22, h * 0.72), max(w, h) * 0.55)
+        warm_orb.setColorAt(0.0, QColor(186, 138, 92, 64))
+        warm_orb.setColorAt(0.5, QColor(122, 86, 56, 28))
+        warm_orb.setColorAt(1.0, QColor(28, 23, 20, 0))
+        painter.fillRect(self.rect(), warm_orb)
+
+        # Esfera difusa esmeralda-menta superior ('Mint Spotlight Aura')
+        mint_orb = QRadialGradient(QPointF(w * 0.52, h * 0.16), max(w, h) * 0.46)
+        mint_orb.setColorAt(0.0, QColor(94, 252, 232, 48))
+        mint_orb.setColorAt(0.5, QColor(20, 184, 166, 18))
+        mint_orb.setColorAt(1.0, QColor(15, 19, 19, 0))
+        painter.fillRect(self.rect(), mint_orb)
+
+        # Luz ambiente suave no canto direito
+        champagne_orb = QRadialGradient(QPointF(w * 0.84, h * 0.65), max(w, h) * 0.42)
+        champagne_orb.setColorAt(0.0, QColor(214, 182, 142, 42))
+        champagne_orb.setColorAt(1.0, QColor(20, 17, 15, 0))
+        painter.fillRect(self.rect(), champagne_orb)
 
     # ==================================================================
     # ECRÃ 1: AUTENTICAÇÃO DUPLA (BIOMETRIA + PEN USB FÍSICA)
@@ -457,7 +797,7 @@ class CriptexMainWindow(QMainWindow):
         self.qr_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_image_label.setFixedSize(240, 240)
         self.qr_image_label.setStyleSheet(
-            "background-color: #ffffff; border: 1px solid #30363d; border-radius: 8px; padding: 10px;"
+            "background-color: #ffffff; border: 2px solid rgba(94, 252, 232, 0.55); border-radius: 20px; padding: 10px;"
         )
         qr_center = QHBoxLayout()
         qr_center.addStretch()
@@ -467,7 +807,7 @@ class CriptexMainWindow(QMainWindow):
 
         self.qr_url_label = QLabel("A iniciar servidor HTTPS local...")
         self.qr_url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_url_label.setStyleSheet("font-family: Consolas, monospace; color: #8b949e; font-size: 11px;")
+        self.qr_url_label.setStyleSheet("font-family: Consolas, monospace; color: #5efce8; font-size: 11px;")
         self.qr_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         qr_layout.addWidget(self.qr_url_label)
 
@@ -475,16 +815,16 @@ class CriptexMainWindow(QMainWindow):
         self.bio_pairing_info_label.setWordWrap(True)
         self.bio_pairing_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bio_pairing_info_label.setStyleSheet(
-            "background-color: #0d1117; border: 1px solid #30363d; border-radius: 5px; padding: 8px; "
-            "color: #8b949e; font-size: 11px;"
+            "background-color: rgba(20, 18, 17, 0.58); border: 1px solid rgba(255, 255, 255, 0.16); "
+            "border-radius: 14px; padding: 9px; color: rgba(244, 241, 238, 0.78); font-size: 11px;"
         )
         qr_layout.addWidget(self.bio_pairing_info_label)
 
         self.bio_status_badge = QLabel("Aguardando leitura biométrica no smartphone...")
         self.bio_status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bio_status_badge.setStyleSheet(
-            "background-color: #1f1d14; border: 1px solid #9e6a03; border-radius: 5px; color: #e3b341; "
-            "padding: 9px; font-size: 12px; font-weight: 600;"
+            "background-color: rgba(54, 42, 22, 0.62); border: 1px solid rgba(245, 194, 87, 0.48); "
+            "border-radius: 14px; color: #f7d070; padding: 9px; font-size: 12px; font-weight: 600;"
         )
         qr_layout.addWidget(self.bio_status_badge)
 
@@ -600,34 +940,34 @@ class CriptexMainWindow(QMainWindow):
         b_layout.setContentsMargins(16, 9, 16, 9)
 
         self.lbl_shield_state = QLabel("Proteção Ativa")
-        self.lbl_shield_state.setStyleSheet("font-weight: 700; color: #3fb950; font-size: 13px;")
+        self.lbl_shield_state.setStyleSheet("font-weight: 700; color: #5efce8; font-size: 13px;")
         b_layout.addWidget(self.lbl_shield_state)
 
         self.lbl_usb_vault_state = QLabel("Pen USB: A verificar...")
         self.lbl_usb_vault_state.setStyleSheet(
-            "background-color: #12261e; border: 1px solid #238636; border-radius: 4px; color: #3fb950; "
-            "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+            "background-color: rgba(18, 56, 48, 0.65); border: 1px solid #5efce8; border-radius: 12px; color: #5efce8; "
+            "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_usb_vault_state)
 
         self.lbl_net_state = QLabel("Internet: Cortada")
         self.lbl_net_state.setStyleSheet(
-            "background-color: #281216; border: 1px solid #da3633; border-radius: 4px; color: #ffa198; "
-            "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+            "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 12px; color: #ffa198; "
+            "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_net_state)
 
         self.lbl_kbd_state = QLabel("Teclado: Mascarado")
         self.lbl_kbd_state.setStyleSheet(
-            "background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; "
-            "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+            "background-color: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 12px; color: #f4f1ee; "
+            "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_kbd_state)
 
         self.lbl_stream_state = QLabel("Anti-Gravação: Ativo")
         self.lbl_stream_state.setStyleSheet(
-            "background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #58a6ff; "
-            "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+            "background-color: rgba(20, 62, 58, 0.58); border: 1px solid rgba(94, 252, 232, 0.45); border-radius: 12px; color: #5efce8; "
+            "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_stream_state)
 
@@ -656,24 +996,39 @@ class CriptexMainWindow(QMainWindow):
         self.no_usb_warning_banner.setVisible(False)
         v_root.addWidget(self.no_usb_warning_banner)
 
+        # Barra de Navegação Cápsula em Vidro Fumado com Spotlight ('Liquid Glass Nav Bar')
+        self.glass_nav = GlassSpotlightNavBar(
+            [
+                ("passwords", "Passwords"),
+                ("files", "Ficheiros (.crpx)"),
+                ("matrix", "Matriz Vigenère"),
+                ("shield", "Escudo & Sistema"),
+                ("settings", "Dispositivos"),
+            ]
+        )
+        v_root.addWidget(self.glass_nav)
+
         # Separadores do Cofre
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setVisible(False)
         self.tabs.addTab(self._build_passwords_tab(), "Passwords (Cifra de Vigenère)")
         self.tabs.addTab(self._build_files_tab(), "Ficheiros Cifrados (.crpx)")
         self.tabs.addTab(self._build_vigenere_inspector_tab(), "Inspetor da Cifra de Vigenère")
         self.tabs.addTab(self._build_security_center_tab(), "Segurança & Monitorização")
         self.tabs.addTab(self._build_settings_tab(), "Definições & Dispositivos")
+        self.glass_nav.tabSelected.connect(self.tabs.setCurrentIndex)
+        self.tabs.currentChanged.connect(self.glass_nav.set_active_index)
         v_root.addWidget(self.tabs, 1)
 
         # Barra Inferior de Proteção de Teclado
         chaff_bar = QFrame()
         chaff_bar.setObjectName("Card")
         c_layout = QHBoxLayout(chaff_bar)
-        c_layout.setContentsMargins(12, 6, 12, 6)
+        c_layout.setContentsMargins(16, 8, 16, 8)
         lbl_c = QLabel("Proteção Anti-Keylogger (Ruído externo gerado):")
-        lbl_c.setStyleSheet("color: #8b949e; font-weight: 600; font-size: 12px;")
+        lbl_c.setStyleSheet("color: rgba(244, 241, 238, 0.72); font-weight: 600; font-size: 12px;")
         self.lbl_chaff_stream = QLabel("A aguardar digitação dentro do cofre...")
-        self.lbl_chaff_stream.setStyleSheet("font-family: Consolas, monospace; color: #58a6ff; font-size: 12px;")
+        self.lbl_chaff_stream.setStyleSheet("font-family: Consolas, monospace; color: #5efce8; font-size: 12px;")
         c_layout.addWidget(lbl_c)
         c_layout.addWidget(self.lbl_chaff_stream, 1)
         v_root.addWidget(chaff_bar)
@@ -767,8 +1122,8 @@ class CriptexMainWindow(QMainWindow):
         self.lbl_live_vig_preview = QLabel("A aguardar introdução...")
         self.lbl_live_vig_preview.setWordWrap(True)
         self.lbl_live_vig_preview.setStyleSheet(
-            "background-color: #0d1117; border: 1px solid #30363d; border-radius: 5px; padding: 8px; "
-            "font-family: Consolas, monospace; color: #58a6ff; font-size: 11px;"
+            "background-color: rgba(18, 16, 15, 0.58); border: 1px solid rgba(94, 252, 232, 0.35); border-radius: 13px; padding: 9px; "
+            "font-family: Consolas, monospace; color: #5efce8; font-size: 11px;"
         )
         f_layout.addWidget(self.lbl_live_vig_preview)
 
@@ -785,8 +1140,8 @@ class CriptexMainWindow(QMainWindow):
         )
         self.lbl_revealed_box.setWordWrap(True)
         self.lbl_revealed_box.setStyleSheet(
-            "background-color: #0d1117; border: 1px solid #30363d; border-left: 3px solid #2f81f7; "
-            "border-radius: 4px; padding: 10px; font-size: 12px; color: #e6edf3;"
+            "background-color: rgba(18, 16, 15, 0.58); border: 1px solid rgba(255, 255, 255, 0.18); border-left: 3px solid #5efce8; "
+            "border-radius: 13px; padding: 10px; font-size: 12px; color: #f4f1ee;"
         )
         f_layout.addWidget(self.lbl_revealed_box)
         f_layout.addStretch()
@@ -903,8 +1258,8 @@ class CriptexMainWindow(QMainWindow):
         self.vig_summary_label = QLabel()
         self.vig_summary_label.setWordWrap(True)
         self.vig_summary_label.setStyleSheet(
-            "background-color: #161b22; border: 1px solid #30363d; border-left: 3px solid #2f81f7; "
-            "border-radius: 5px; padding: 10px; font-family: Consolas, monospace; color: #58a6ff; font-size: 12px;"
+            "background-color: rgba(20, 18, 17, 0.58); border: 1px solid rgba(94, 252, 232, 0.35); border-left: 3px solid #5efce8; "
+            "border-radius: 14px; padding: 10px; font-family: Consolas, monospace; color: #5efce8; font-size: 12px;"
         )
         layout.addWidget(self.vig_summary_label)
 
@@ -1002,8 +1357,8 @@ class CriptexMainWindow(QMainWindow):
         self.settings_bio_info_box = QLabel()
         self.settings_bio_info_box.setWordWrap(True)
         self.settings_bio_info_box.setStyleSheet(
-            "background-color: #0d1117; border: 1px solid #30363d; border-left: 3px solid #2f81f7; "
-            "border-radius: 5px; padding: 12px; font-family: Consolas, monospace; font-size: 12px; color: #e6edf3;"
+            "background-color: rgba(18, 16, 15, 0.58); border: 1px solid rgba(255, 255, 255, 0.18); border-left: 3px solid #5efce8; "
+            "border-radius: 14px; padding: 12px; font-family: Consolas, monospace; font-size: 12px; color: #f4f1ee;"
         )
         b_layout.addWidget(self.settings_bio_info_box)
 
@@ -1035,8 +1390,8 @@ class CriptexMainWindow(QMainWindow):
         self.settings_usb_info_box = QLabel()
         self.settings_usb_info_box.setWordWrap(True)
         self.settings_usb_info_box.setStyleSheet(
-            "background-color: #0d1117; border: 1px solid #30363d; border-radius: 5px; "
-            "padding: 12px; font-family: Consolas, monospace; font-size: 12px; color: #c9d1d9;"
+            "background-color: rgba(18, 16, 15, 0.58); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 14px; "
+            "padding: 12px; font-family: Consolas, monospace; font-size: 12px; color: #f4f1ee;"
         )
         u_layout.addWidget(self.settings_usb_info_box)
 
@@ -1077,7 +1432,7 @@ class CriptexMainWindow(QMainWindow):
                 f"Pen USB com Chave Detetada: {active_drive.mount_point} ({active_drive.volume_label} | S/N: {active_drive.serial_number})"
             )
             self.usb_status_badge.setStyleSheet(
-                "background-color: #12261e; border: 1px solid #238636; border-radius: 5px; color: #3fb950; "
+                "background-color: rgba(18, 56, 48, 0.65); border: 1px solid #5efce8; border-radius: 14px; color: #5efce8; "
                 "padding: 9px; font-size: 12px; font-weight: 600;"
             )
         else:
@@ -1092,7 +1447,7 @@ class CriptexMainWindow(QMainWindow):
                     "Nenhuma Pen USB com chave detetada: Se abrir o Criptex apenas com o smartphone, todos os dados permanecerão encriptados."
                 )
             self.usb_status_badge.setStyleSheet(
-                "background-color: #281216; border: 1px solid #da3633; border-radius: 5px; color: #ffa198; "
+                "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 14px; color: #ffa198; "
                 "padding: 9px; font-size: 12px; font-weight: 600;"
             )
 
@@ -1163,8 +1518,8 @@ class CriptexMainWindow(QMainWindow):
                 f"Apenas este smartphone pode desbloquear o Criptex. Alteração disponível apenas nas Definições dentro do cofre."
             )
             self.bio_pairing_info_label.setStyleSheet(
-                "background-color: #111b27; border: 1px solid #1f6feb; border-radius: 5px; padding: 8px; "
-                "color: #58a6ff; font-size: 11px; font-weight: 600;"
+                "background-color: rgba(18, 56, 48, 0.55); border: 1px solid rgba(94, 252, 232, 0.48); border-radius: 14px; padding: 9px; "
+                "color: #5efce8; font-size: 11px; font-weight: 600;"
             )
         else:
             self.bio_pairing_info_label.setText(
@@ -1172,8 +1527,8 @@ class CriptexMainWindow(QMainWindow):
                 "O primeiro telemóvel a ler o QR Code e concluir o desbloqueio biométrico ficará registado neste cofre."
             )
             self.bio_pairing_info_label.setStyleSheet(
-                "background-color: #0d1117; border: 1px solid #30363d; border-radius: 5px; padding: 8px; "
-                "color: #8b949e; font-size: 11px;"
+                "background-color: rgba(20, 18, 17, 0.58); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 14px; padding: 9px; "
+                "color: rgba(244, 241, 238, 0.78); font-size: 11px;"
             )
 
     def _start_biometric_qr_session(self) -> None:
@@ -1182,7 +1537,7 @@ class CriptexMainWindow(QMainWindow):
         self._refresh_bio_pairing_banner_on_lock_screen()
         self.bio_status_badge.setText("Aguardando leitura biométrica no smartphone...")
         self.bio_status_badge.setStyleSheet(
-            "background-color: #1f1d14; border: 1px solid #9e6a03; border-radius: 5px; color: #e3b341; "
+            "background-color: rgba(54, 42, 22, 0.62); border: 1px solid rgba(245, 194, 87, 0.48); border-radius: 14px; color: #f7d070; "
             "padding: 9px; font-size: 12px; font-weight: 600;"
         )
 
@@ -1197,7 +1552,7 @@ class CriptexMainWindow(QMainWindow):
         qr = qrcode.QRCode(version=1, box_size=8, border=2)
         qr.add_data(url)
         qr.make(fit=True)
-        pil_img = qr.make_image(fill_color="#0d1117", back_color="#ffffff")
+        pil_img = qr.make_image(fill_color="#161311", back_color="#ffffff")
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         qimg = QImage.fromData(buf.getvalue(), "PNG")
@@ -1217,7 +1572,7 @@ class CriptexMainWindow(QMainWindow):
             f"Biometria Confirmada às {result.timestamp} ({result.mode})"
         )
         self.bio_status_badge.setStyleSheet(
-            "background-color: #12261e; border: 1px solid #238636; border-radius: 5px; color: #3fb950; "
+            "background-color: rgba(18, 56, 48, 0.68); border: 1px solid #5efce8; border-radius: 14px; color: #5efce8; "
             "padding: 9px; font-size: 12px; font-weight: 600;"
         )
         self._update_unlock_button_text()
@@ -1275,8 +1630,8 @@ class CriptexMainWindow(QMainWindow):
                 f"Pen USB Ativa ({active_drive.mount_point}) — Dados Desencriptados"
             )
             self.lbl_usb_vault_state.setStyleSheet(
-                "background-color: #12261e; border: 1px solid #238636; border-radius: 4px; color: #3fb950; "
-                "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+                "background-color: rgba(18, 56, 48, 0.65); border: 1px solid #5efce8; border-radius: 12px; color: #5efce8; "
+                "padding: 5px 12px; font-size: 12px; font-weight: 600;"
             )
             self.lbl_pw_table_header.setText(
                 "Passwords Guardadas (Pen USB Presente — Dados Desencriptados)"
@@ -1290,8 +1645,8 @@ class CriptexMainWindow(QMainWindow):
             )
             self.lbl_usb_vault_state.setText("Pen USB Ausente — Dados Encriptados")
             self.lbl_usb_vault_state.setStyleSheet(
-                "background-color: #281216; border: 1px solid #da3633; border-radius: 4px; color: #ffa198; "
-                "padding: 4px 10px; font-size: 12px; font-weight: 600;"
+                "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 12px; color: #ffa198; "
+                "padding: 5px 12px; font-size: 12px; font-weight: 600;"
             )
             self.lbl_pw_table_header.setText(
                 "Passwords Guardadas (Pen USB Ausente — Todos os dados permanecem encriptados com Vigenère)"

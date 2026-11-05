@@ -42,26 +42,30 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
 <title>Criptex — Desbloqueio Biométrico</title>
 <style>
   :root {
-    --bg: #0d1117;
-    --card: #161b22;
-    --accent: #2f81f7;
-    --accent-dim: rgba(47, 129, 247, 0.14);
-    --success: #3fb950;
-    --danger: #f85149;
-    --text: #f0f6fc;
-    --muted: #8b949e;
+    --bg: #151210;
+    --card: rgba(46, 40, 36, 0.58);
+    --accent: #5efce8;
+    --accent-dim: rgba(94, 252, 232, 0.16);
+    --success: #5efce8;
+    --danger: #ff7b72;
+    --text: #f6f3f0;
+    --muted: rgba(244, 238, 232, 0.72);
   }
   * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     -webkit-user-select: none;
   }
   body {
-    background: var(--bg);
+    background:
+      radial-gradient(circle at 50% 12%, rgba(94, 252, 232, 0.22) 0%, transparent 48%),
+      radial-gradient(circle at 22% 78%, rgba(196, 146, 98, 0.28) 0%, transparent 55%),
+      radial-gradient(circle at 82% 68%, rgba(214, 182, 142, 0.18) 0%, transparent 45%),
+      linear-gradient(160deg, #14110f 0%, #1e1916 52%, #111616 100%);
     color: var(--text);
     min-height: 100vh;
     display: flex;
@@ -71,53 +75,72 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
     padding: 18px;
   }
   .vault-card {
+    position: relative;
+    overflow: hidden;
     width: 100%;
     max-width: 400px;
-    background: var(--card);
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 26px 22px;
+    background: linear-gradient(180deg, rgba(58, 50, 45, 0.66) 0%, rgba(34, 29, 27, 0.58) 55%, rgba(24, 21, 19, 0.72) 100%);
+    backdrop-filter: blur(26px) saturate(165%);
+    -webkit-backdrop-filter: blur(26px) saturate(165%);
+    border-top: 1px solid rgba(255, 255, 255, 0.34);
+    border-left: 1px solid rgba(255, 255, 255, 0.20);
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+    border-bottom: 1.5px solid rgba(94, 252, 232, 0.45);
+    border-radius: 28px;
+    padding: 28px 22px;
     text-align: center;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  }
+  .vault-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 68px;
+    height: 4px;
+    border-radius: 99px;
+    background: #5efce8;
+    box-shadow: 0 0 24px 6px rgba(94, 252, 232, 0.55);
   }
   .badge {
     display: inline-block;
-    padding: 4px 12px;
-    background: var(--accent-dim);
-    color: #58a6ff;
-    border: 1px solid rgba(56, 139, 253, 0.35);
+    padding: 5px 14px;
+    background: rgba(94, 252, 232, 0.14);
+    color: #5efce8;
+    border: 1px solid rgba(94, 252, 232, 0.42);
     border-radius: 99px;
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.4px;
+    letter-spacing: 0.5px;
     margin-bottom: 12px;
   }
   h1 {
-    font-size: 20px;
+    font-size: 21px;
     font-weight: 700;
     margin-bottom: 8px;
-    color: #f0f6fc;
+    color: #ffffff;
   }
   p.sub {
     font-size: 13px;
     color: var(--muted);
     line-height: 1.5;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
   .pairing-pill {
     font-size: 11px;
     font-weight: 600;
-    padding: 7px 12px;
-    border-radius: 6px;
+    padding: 8px 14px;
+    border-radius: 99px;
     margin-bottom: 20px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    color: #58a6ff;
+    background: rgba(18, 16, 15, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.20);
+    color: #5efce8;
   }
   .scanner-wrap {
     position: relative;
-    width: 132px;
-    height: 132px;
+    width: 136px;
+    height: 136px;
     margin: 0 auto 20px;
     display: flex;
     align-items: center;
@@ -129,30 +152,34 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
     position: absolute;
     top: 0;
     left: 0;
-    width: 132px;
-    height: 132px;
+    width: 136px;
+    height: 136px;
     transform: rotate(-90deg);
   }
   .ring-bg {
-    fill: rgba(56, 139, 253, 0.08);
-    stroke: #30363d;
-    stroke-width: 4;
+    fill: rgba(24, 66, 60, 0.36);
+    stroke: rgba(255, 255, 255, 0.22);
+    stroke-width: 3.5;
   }
   .ring-progress {
     fill: none;
-    stroke: #2f81f7;
-    stroke-width: 5;
+    stroke: #5efce8;
+    stroke-width: 4.5;
     stroke-linecap: round;
     stroke-dasharray: 377;
     stroke-dashoffset: 377;
-    transition: stroke-dashoffset 0.08s linear, stroke 0.2s ease;
+    filter: drop-shadow(0 0 8px rgba(94, 252, 232, 0.65));
+    transition: stroke-dashoffset 0.12s ease, stroke 0.2s ease;
   }
   .scanner-core {
     position: relative;
     z-index: 2;
-    width: 104px;
-    height: 104px;
+    width: 106px;
+    height: 106px;
     border-radius: 50%;
+    border: 1px solid rgba(94, 252, 232, 0.38);
+    background: radial-gradient(circle, rgba(94, 252, 232, 0.20) 0%, rgba(22, 54, 48, 0.42) 100%);
+    box-shadow: 0 0 26px rgba(94, 252, 232, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.30);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -161,7 +188,7 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
   }
   .scanner-wrap.scanning .scanner-core {
     transform: scale(0.95);
-    background: rgba(47, 129, 247, 0.18);
+    background: radial-gradient(circle, rgba(94, 252, 232, 0.38) 0%, rgba(22, 68, 60, 0.62) 100%);
   }
   .scanner-wrap.verified .ring-progress {
     stroke: var(--success);
@@ -170,15 +197,16 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
   .fp-icon {
     width: 54px;
     height: 54px;
-    stroke: #58a6ff;
+    stroke: #ffffff;
     fill: none;
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
+    filter: drop-shadow(0 0 6px rgba(94, 252, 232, 0.55));
     transition: stroke 0.2s ease;
   }
   .scanner-wrap.verified .fp-icon {
-    stroke: var(--success);
+    stroke: #5efce8;
   }
   .scan-hint {
     font-size: 11px;
@@ -187,17 +215,21 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
   }
   .btn-bio {
     width: 100%;
-    padding: 14px;
-    border: 1px solid #388bfd;
-    border-radius: 6px;
-    background: #1f6feb;
+    padding: 14px 18px;
+    border-top: 1px solid #99fff2;
+    border-left: 1px solid #5efce8;
+    border-right: 1px solid #5efce8;
+    border-bottom: 1px solid #2dd4bf;
+    border-radius: 99px;
+    background: linear-gradient(180deg, rgba(94, 252, 232, 0.36) 0%, rgba(20, 184, 166, 0.28) 50%, rgba(15, 118, 110, 0.48) 100%);
+    box-shadow: 0 8px 24px rgba(45, 212, 191, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.35);
     color: #ffffff;
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
   }
   .btn-bio:active {
-    background: #1a5fd0;
+    transform: scale(0.98);
   }
   .btn-bio:disabled {
     opacity: 0.6;
@@ -205,12 +237,12 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
   }
   .status-box {
     margin-top: 16px;
-    padding: 12px;
-    border-radius: 6px;
+    padding: 12px 14px;
+    border-radius: 16px;
     font-size: 12px;
     line-height: 1.45;
-    background: #0d1117;
-    border: 1px solid #30363d;
+    background: rgba(18, 16, 15, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.18);
     color: var(--muted);
     min-height: 50px;
     display: flex;
@@ -218,22 +250,22 @@ MOBILE_BIOMETRIC_HTML = r"""<!DOCTYPE html>
     justify-content: center;
   }
   .status-ok {
-    border-color: #238636;
-    color: #3fb950;
-    background: #12261e;
+    border-color: #5efce8;
+    color: #5efce8;
+    background: rgba(18, 56, 48, 0.62);
     font-weight: 600;
   }
   .status-err {
     border-color: var(--danger);
     color: #ffa198;
-    background: #281216;
+    background: rgba(68, 22, 28, 0.62);
     font-weight: 600;
   }
   .meta-info {
     margin-top: 16px;
     font-size: 11px;
-    color: #8b949e;
-    border-top: 1px solid #30363d;
+    color: rgba(244, 238, 232, 0.62);
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
     padding-top: 12px;
     line-height: 1.4;
   }
