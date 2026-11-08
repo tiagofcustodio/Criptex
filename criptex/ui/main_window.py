@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import io
+import os
 import random
 import string
 import sys
@@ -2426,5 +2427,4 @@ def run_app() -> int:
     app.setOrganizationName("Tiago Custodio")
     window = CriptexMainWindow()
     window.show()
-    code = app.exec()
-    os._exit(code)
+    return app.exec()

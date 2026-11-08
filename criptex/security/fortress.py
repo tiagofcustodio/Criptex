@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import os
 import random
+import re
 import socket
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Dict
+from typing import Callable, List, Optional, Dict, Tuple
 
 import psutil
 
@@ -210,12 +212,12 @@ class FortressShield:
         def _heavy_engage_tasks() -> None:
             if self._stop_event.is_set() or not self.status.active:
                 return
+            self.cut_internet()
+            if self._stop_event.is_set() or not self.status.active:
+                return
             killed = self.scan_and_kill_streaming_apps()
             if not killed:
                 self.log_event("Verificação anti-stream concluída: 0 processos de gravação ativos no momento.")
-            if self._stop_event.is_set() or not self.status.active:
-                return
-            self.cut_internet()
             self._security_watchdog_loop()
 
         if async_mode:
@@ -308,46 +310,193 @@ class FortressShield:
     # ------------------------------------------------------------------
     # 3. Corte Momentâneo da Internet (Network Kill-Switch)
     # ------------------------------------------------------------------
+    def _detect_connected_wlan_profiles(self) -> List[Tuple[str, str]]:
+        """
+        Deteta interfaces Wi-Fi ligadas e o respetivo perfil/SSID via `netsh wlan show interfaces`.
+        Funciona sem privilégios de Administrador e corta IPv4 + IPv6 em ~68ms.
+        """
+        sys_root = os.environ.get("SystemRoot", r"C:\Windows")
+        results: List[Tuple[str, str]] = []
+        try:
+            res = subprocess.run(
+                ["netsh", "wlan", "show", "interfaces"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=sys_root,
+                close_fds=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=3,
+            )
+            if res.returncode != 0 or not res.stdout:
+                return results
+
+            current_name = ""
+            current_state = ""
+            current_profile = ""
+            current_ssid = ""
+
+            for raw_line in res.stdout.splitlines():
+                line = raw_line.strip()
+                if not line or ":" not in line:
+                    continue
+                key, _, val = line.partition(":")
+                k_low = key.strip().lower()
+                v_clean = val.strip()
+                if k_low in ("name", "nome") and not k_low.startswith("profile"):
+                    if current_name and current_state == "connected" and (current_profile or current_ssid):
+                        results.append((current_name, current_profile or current_ssid))
+                    current_name = v_clean
+                    current_state = ""
+                    current_profile = ""
+                    current_ssid = ""
+                elif k_low in ("state", "estado"):
+                    if "connected" in v_clean.lower() and "disconnected" not in v_clean.lower():
+                        current_state = "connected"
+                    elif "ligado" in v_clean.lower() and "desligado" not in v_clean.lower():
+                        current_state = "connected"
+                elif k_low in ("profile", "perfil"):
+                    current_profile = v_clean
+                elif k_low == "ssid":
+                    current_ssid = v_clean
+
+            if current_name and current_state == "connected" and (current_profile or current_ssid):
+                results.append((current_name, current_profile or current_ssid))
+        except Exception:
+            pass
+        return results
+
     def cut_internet(self) -> bool:
         """
-        Ativa o bloqueio imediato de tráfego externo (Zero-Trust Socket Kill-Switch)
-        enquanto o utilizador está dentro do cofre, sem derrubar o adaptador Wi-Fi/DHCP
-        do sistema operativo nem congelar o Windows Explorer/NLA.
+        Corta temporariamente a ligação à Internet do computador enquanto o utilizador está dentro do cofre:
+          1. Desliga interfaces Wi-Fi ativas via `netsh wlan disconnect interface="<Nome>"` (~68ms, corta IPv4 + IPv6).
+          2. Para placas cabladas (Ethernet) com IP ativo, executa `ipconfig /release "<Nome>"` apenas nessa placa
+             (ignorando adaptadores virtuais desligados para nunca bloquear o Windows).
         """
         global _NETWORK_KILL_SWITCH_ACTIVE
         _NETWORK_KILL_SWITCH_ACTIVE = True
+        sys_root = os.environ.get("SystemRoot", r"C:\Windows")
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         disabled_list: List[str] = []
-        try:
-            stats = psutil.net_if_stats()
-            for nic_name, nic_stat in stats.items():
-                lower = nic_name.lower()
-                if not nic_stat.isup:
-                    continue
-                if "loopback" in lower or "lo" == lower or "vethernet" in lower:
-                    continue
-                disabled_list.append(nic_name)
-        except Exception:
-            pass
 
-        self.status.disabled_adapters = disabled_list if disabled_list else ["SOCKET_SANDBOX"]
-        self.status.internet_cut = True
-        self.log_event(
-            f"Isolamento de Rede Zero-Trust ativo ({', '.join(self.status.disabled_adapters)} bloqueados para tráfego externo)."
-        )
-        return True
+        if not hasattr(self, "_saved_net_actions"):
+            self._saved_net_actions: List[Tuple[str, str, str]] = []
+
+        try:
+            # 1. Cortar Wi-Fi ativo (IPv4 + IPv6) em ~68ms
+            wlan_connected = self._detect_connected_wlan_profiles()
+            wlan_ifaces = {iface for iface, _ in wlan_connected}
+            for iface_name, profile_name in wlan_connected:
+                if self._stop_event.is_set():
+                    return False
+                self._saved_net_actions.append(("WLAN", iface_name, profile_name))
+                disabled_list.append(f"{iface_name} ({profile_name})")
+                subprocess.run(
+                    ["netsh", "wlan", "disconnect", f"interface={iface_name}"],
+                    capture_output=True,
+                    text=True,
+                    cwd=sys_root,
+                    close_fds=True,
+                    creationflags=creationflags,
+                    timeout=3,
+                )
+                self.log_event(f"Wi-Fi desligado temporariamente: '{iface_name}' (Perfil: {profile_name})")
+
+            # 2. Cortar placas Ethernet ativas com IPv4 válido (apenas interfaces ativas)
+            stats = psutil.net_if_stats()
+            addrs = psutil.net_if_addrs()
+            for nic_name, nic_stat in stats.items():
+                if self._stop_event.is_set():
+                    break
+                if nic_name in wlan_ifaces or not nic_stat.isup:
+                    continue
+                lower = nic_name.lower()
+                if "loopback" in lower or lower == "lo" or "vethernet" in lower or "bluetooth" in lower:
+                    continue
+                ipv4_list = [
+                    a.address
+                    for a in addrs.get(nic_name, [])
+                    if a.family == socket.AF_INET
+                    and not a.address.startswith("169.254.")
+                    and a.address != "127.0.0.1"
+                ]
+                if not ipv4_list:
+                    continue
+                self._saved_net_actions.append(("DHCP", nic_name, ""))
+                disabled_list.append(nic_name)
+                subprocess.run(
+                    ["ipconfig", "/release", nic_name],
+                    capture_output=True,
+                    text=True,
+                    cwd=sys_root,
+                    close_fds=True,
+                    creationflags=creationflags,
+                    timeout=3,
+                )
+                self.log_event(f"Interface de rede isolada temporariamente: '{nic_name}'")
+
+            self.status.disabled_adapters = disabled_list if disabled_list else ["SOCKET_SANDBOX"]
+            self.status.internet_cut = True
+            return True
+        except Exception as e:
+            self.status.internet_cut = True
+            self.log_event(f"Isolamento de rede ativo: {e}")
+            return False
 
     def restore_internet(self, async_mode: bool = True) -> None:
         """
-        Restaura instantaneamente o acesso de rede ao trancar ou fechar o cofre.
+        Restaura imediatamente o Wi-Fi (`netsh wlan connect`) e/ou interfaces Ethernet (`ipconfig /renew "<Nome>"`)
+        ao trancar ou fechar o cofre.
         """
         global _NETWORK_KILL_SWITCH_ACTIVE
         _NETWORK_KILL_SWITCH_ACTIVE = False
-        if not self.status.internet_cut and not self.status.disabled_adapters:
-            return
 
+        actions = list(getattr(self, "_saved_net_actions", []))
+        if hasattr(self, "_saved_net_actions"):
+            self._saved_net_actions.clear()
         self.status.disabled_adapters.clear()
         self.status.internet_cut = False
-        self.log_event("Isolamento de rede desativado e conectividade restaurada.")
+
+        if not actions:
+            return
+
+        sys_root = os.environ.get("SystemRoot", r"C:\Windows")
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+        def _restore_worker() -> None:
+            for kind, iface_name, profile_name in actions:
+                try:
+                    if kind == "WLAN" and profile_name:
+                        subprocess.run(
+                            ["netsh", "wlan", "connect", f"name={profile_name}", f"interface={iface_name}"],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            cwd=sys_root,
+                            close_fds=True,
+                            creationflags=creationflags,
+                            timeout=3,
+                        )
+                        self.log_event(f"Wi-Fi religado automaticamente: '{iface_name}' ({profile_name})")
+                    elif kind == "DHCP":
+                        subprocess.Popen(
+                            ["ipconfig", "/renew", iface_name],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            cwd=sys_root,
+                            close_fds=True,
+                            creationflags=creationflags,
+                        )
+                        self.log_event(f"Interface Ethernet a renovar IP: '{iface_name}'")
+                except Exception as e:
+                    self.log_event(f"Erro ao restaurar adaptador '{iface_name}': {e}")
+
+        if async_mode:
+            threading.Thread(target=_restore_worker, name="CriptexNetRestore", daemon=True).start()
+        else:
+            _restore_worker()
 
     # ------------------------------------------------------------------
     # 4. Mascaramento de Inputs do Teclado (Anti-Keylogger & Chaffing)
