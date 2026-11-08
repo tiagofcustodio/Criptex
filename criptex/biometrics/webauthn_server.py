@@ -790,18 +790,31 @@ class SmartphoneBiometricServer:
                 "nokey@localhost.run",
             ]
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            sys_root = os.environ.get("SystemRoot", r"C:\Windows")
             try:
+                if not self.is_running:
+                    self._tunnel_ready_event.set()
+                    return
                 proc = subprocess.Popen(
                     cmd,
-                    stdin=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    cwd=sys_root,
+                    close_fds=True,
                     creationflags=creationflags,
                 )
                 self._tunnel_proc = proc
+                if not self.is_running:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    self._tunnel_ready_event.set()
+                    return
                 url_pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.lhr\.life")
                 assert proc.stdout is not None
                 for line in proc.stdout:

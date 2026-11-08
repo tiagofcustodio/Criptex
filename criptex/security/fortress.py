@@ -291,6 +291,7 @@ class FortressShield:
             restaurar ao sair).
           - Sem Administrador: executa `ipconfig /release` para interromper a conectividade IP.
         """
+        sys_root = os.environ.get("SystemRoot", r"C:\Windows") if "os" in globals() else r"C:\Windows"
         disabled_list: List[str] = []
         try:
             stats = psutil.net_if_stats()
@@ -308,6 +309,8 @@ class FortressShield:
                         cmd,
                         capture_output=True,
                         text=True,
+                        cwd=sys_root,
+                        close_fds=True,
                         creationflags=subprocess.CREATE_NO_WINDOW,
                         timeout=4,
                     )
@@ -327,6 +330,8 @@ class FortressShield:
                 ["ipconfig", "/release"],
                 capture_output=True,
                 text=True,
+                cwd=sys_root,
+                close_fds=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 timeout=4,
             )
@@ -349,8 +354,8 @@ class FortressShield:
     def restore_internet(self, async_mode: bool = True) -> None:
         """
         Restaura as interfaces de rede e a ligação à Internet ao fechar o cofre.
-        Executa os comandos `netsh` / `ipconfig /renew` como processos autónomos em segundo plano
-        para que o fecho ou bloqueio da janela seja instantâneo e nunca congele a UI.
+        Executa os comandos `netsh` / `ipconfig /renew` como processos autónomos em `C:\\Windows`
+        com `close_fds=True` para nunca reter a pasta `_MEIxxxxxx` do PyInstaller ao fechar.
         """
         if not self.status.internet_cut and not self.status.disabled_adapters:
             return
@@ -362,7 +367,8 @@ class FortressShield:
         if not adapters_to_restore:
             return
 
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        sys_root = r"C:\Windows"
 
         def _restore_worker() -> None:
             for nic_name in adapters_to_restore:
@@ -373,6 +379,8 @@ class FortressShield:
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
+                            cwd=sys_root,
+                            close_fds=True,
                             creationflags=creationflags,
                         )
                         self.log_event("Ligação IP a ser restaurada (ipconfig /renew).")
@@ -382,6 +390,8 @@ class FortressShield:
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
+                            cwd=sys_root,
+                            close_fds=True,
                             creationflags=creationflags,
                         )
                         self.log_event(f"Placa de rede reativada: '{nic_name}'")
@@ -399,9 +409,8 @@ class FortressShield:
     def start_keyboard_masking(self) -> None:
         """
         Ativa a proteção de inputs do teclado em duas camadas:
-          1. Low-Level Keyboard Hook (`WH_KEYBOARD_LL`) do Windows que interceta eventos de teclas
-             enquanto o cofre está focado e sinaliza a thread de ruído fantasma (Keystroke Chaffing)
-             sem bloquear o callback do hook.
+          1. Injeção assíncrona de ruído fantasma (Keystroke Chaffing) na fila de eventos
+             enquanto o utilizador digita nos campos protegidos do cofre.
           2. Mascaramento direto nos campos do cofre + Teclado Virtual Baralhado Anti-Keylogger.
         """
         if self.status.keyboard_shield_active:
@@ -409,38 +418,20 @@ class FortressShield:
 
         self.status.keyboard_shield_active = True
         self._chaff_event.clear()
-        self._hook_thread = threading.Thread(
-            target=self._win32_keyboard_hook_worker,
-            name="CriptexKeyboardMaskHook",
-            daemon=True,
-        )
-        self._hook_thread.start()
         threading.Thread(
             target=self._chaff_sender_worker,
             name="CriptexKeyboardChaffSender",
             daemon=True,
         ).start()
         self.log_event(
-            "Mascaramento de Teclado Anti-Keylogger ativo (WH_KEYBOARD_LL + Injeção de Ruído Chaff para o exterior)."
+            "Mascaramento de Teclado Anti-Keylogger ativo (Injeção de Ruído Chaff + Proteção de Campos)."
         )
 
     def stop_keyboard_masking(self) -> None:
         self.status.keyboard_shield_active = False
         self._chaff_event.set()
-        hook_id = self._hook_id
         self._hook_id = None
-        if hook_id:
-            try:
-                ctypes.windll.user32.UnhookWindowsHookEx(hook_id)
-            except Exception:
-                pass
-        tid = self._hook_thread_id
         self._hook_thread_id = None
-        if tid:
-            try:
-                ctypes.windll.user32.PostThreadMessageW(tid, 0x0012, 0, 0)  # WM_QUIT
-            except Exception:
-                pass
 
     def inject_external_chaff_burst(self, count: int = 3) -> str:
         """
@@ -451,6 +442,7 @@ class FortressShield:
         fake_chars = "".join(random.choices("X#9$Q!7@Z%4&K*2", k=count))
         self.status.masked_keystrokes_count += 1
         self.status.chaff_injected_count += count
+        self._chaff_event.set()
         return fake_chars
 
     def _send_synthetic_decoy_vk(self, vk_code: int) -> None:
@@ -484,8 +476,7 @@ class FortressShield:
 
     def _chaff_sender_worker(self) -> None:
         """
-        Thread dedicada para enviar eventos de ruído sintético fora do callback `WH_KEYBOARD_LL`,
-        evitando reentrância no hook do Windows e garantindo latência zero na digitação.
+        Thread dedicada para enviar eventos de ruído sintético com latência zero na digitação.
         """
         while not self._stop_event.is_set() and self.status.keyboard_shield_active:
             if not self._chaff_event.wait(timeout=0.5):
@@ -496,57 +487,6 @@ class FortressShield:
             for _ in range(random.randint(2, 4)):
                 decoy_vk = random.choice([0x84, 0x85, 0x86, 0x87])
                 self._send_synthetic_decoy_vk(decoy_vk)
-                self.status.chaff_injected_count += 1
-
-    def _win32_keyboard_hook_worker(self) -> None:
-        """
-        Instala um hook `WH_KEYBOARD_LL` no Windows. Sempre que uma tecla real é premida
-        enquanto a janela do cofre Criptex está ativa, aciona `_chaff_event` de forma
-        não-bloqueante para injetar ruído sintético sem atrasar a fila de eventos do Windows.
-        """
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        self._hook_thread_id = kernel32.GetCurrentThreadId()
-
-        HOOKPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long,
-            ctypes.c_int,
-            wintypes.WPARAM,
-            wintypes.LPARAM,
-        )
-
-        def low_level_handler(nCode: int, wParam: int, lParam: int) -> int:
-            try:
-                if nCode == HC_ACTION and (wParam == WM_KEYDOWN or wParam == WM_SYSKEYDOWN):
-                    kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                    if kb.dwExtraInfo != self.CRIPTEX_SYNTHETIC_MARKER:
-                        fg_hwnd = user32.GetForegroundWindow()
-                        if self._protected_hwnd and fg_hwnd == self._protected_hwnd:
-                            self.status.masked_keystrokes_count += 1
-                            self._chaff_event.set()
-            except Exception:
-                pass
-            return user32.CallNextHookEx(self._hook_id or 0, nCode, wParam, lParam)
-
-        # Manter referência viva ao callback C para não ser recolhido pelo GC
-        self._c_hook_proc = HOOKPROC(low_level_handler)
-        h_mod = kernel32.GetModuleHandleW(None)
-        self._hook_id = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._c_hook_proc, h_mod, 0)
-
-        msg = wintypes.MSG()
-        while not self._stop_event.is_set() and self.status.keyboard_shield_active:
-            b_ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-            if b_ret <= 0:
-                break
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
-
-        if self._hook_id:
-            try:
-                user32.UnhookWindowsHookEx(self._hook_id)
-            except Exception:
-                pass
-            self._hook_id = None
 
     # ------------------------------------------------------------------
     # 5. Sentinela Contínua em Background (Watchdog)
