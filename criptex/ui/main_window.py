@@ -15,6 +15,7 @@ import io
 import random
 import string
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -59,8 +60,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from criptex.biometrics.pc_biometrics import PcBiometricAuthenticator
 from criptex.biometrics.webauthn_server import SmartphoneBiometricServer, BiometricAuthResult
 from criptex.crypto.vigenere import VigenereCipher
+from criptex.i18n import tr, get_detected_language_Summary
 from criptex.security.fortress import FortressShield, STREAM_AND_RECORDING_PROCESSES
 from criptex.security.usb_key import UsbKeyManager, UsbDriveInfo
 from criptex.vault.storage import CriptexVaultStorage, PasswordEntry, VaultFileEntry
@@ -519,6 +522,26 @@ class GlassSpotlightNavBar(QWidget):
             path.quadTo(cx - 7.5, cy + 4.0, cx - 7.5, cy - 4.5)
             path.closeSubpath()
             painter.drawPath(path)
+        elif kind == "qr":
+            # Ícone de Código QR
+            painter.drawRect(QRectF(cx - 7.0, cy - 6.0, 5.2, 5.2))
+            painter.drawRect(QRectF(cx + 1.8, cy - 6.0, 5.2, 5.2))
+            painter.drawRect(QRectF(cx - 7.0, cy + 2.8, 5.2, 5.2))
+            painter.drawPoint(QPointF(cx + 3.0, cy + 4.0))
+            painter.drawRect(QRectF(cx + 3.2, cy + 4.2, 3.6, 3.6))
+        elif kind == "fingerprint":
+            # Ícone de Impressão Digital do PC
+            arc1 = QPainterPath()
+            arc1.arcMoveTo(QRectF(cx - 7.5, cy - 6.5, 15.0, 15.0), 30)
+            arc1.arcTo(QRectF(cx - 7.5, cy - 6.5, 15.0, 15.0), 30, 120)
+            painter.drawPath(arc1)
+            arc2 = QPainterPath()
+            arc2.arcMoveTo(QRectF(cx - 4.8, cy - 3.8, 9.6, 11.5), 15)
+            arc2.arcTo(QRectF(cx - 4.8, cy - 3.8, 9.6, 11.5), 15, 150)
+            painter.drawPath(arc2)
+            painter.drawLine(QPointF(cx, cy - 1.2), QPointF(cx, cy + 7.0))
+            painter.drawLine(QPointF(cx - 3.5, cy + 2.0), QPointF(cx - 3.5, cy + 6.8))
+            painter.drawLine(QPointF(cx + 3.5, cy + 2.0), QPointF(cx + 3.5, cy + 6.8))
         else:
             # Ícone de Dispositivo / Utilizador Biométrico
             painter.drawEllipse(QPointF(cx, cy - 3.5), 3.6, 3.6)
@@ -637,8 +660,88 @@ class GlassSpotlightNavBar(QWidget):
             painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignCenter), label)
 
 
+class PcFingerprintOrbWidget(QWidget):
+    """
+    Orbe de Leitura de Impressão Digital em Vidro Fumado & Luz Menta ('Liquid Glass Fingerprint Scanner Orb').
+    Permite clicar diretamente no sensor para acionar o leitor biométrico do PC (Windows Hello / WinBio).
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(184, 184)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._verified = False
+        self._scanning = False
+
+    def set_state(self, verified: bool = False, scanning: bool = False) -> None:
+        self._verified = verified
+        self._scanning = scanning
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+
+        # Halo exterior difuso
+        accent = QColor(94, 252, 232) if not self._scanning else QColor(247, 208, 112)
+        halo = QRadialGradient(QPointF(cx, cy), 88.0)
+        halo.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 86 if self._verified else 54))
+        halo.setColorAt(0.65, QColor(20, 184, 166, 22))
+        halo.setColorAt(1.0, QColor(20, 184, 166, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(halo)
+        painter.drawEllipse(QPointF(cx, cy), 88.0, 88.0)
+
+        # Círculo de vidro fumado ('Smoky Glass Sensor Pad')
+        pad_grad = QLinearGradient(0.0, cy - 68.0, 0.0, cy + 68.0)
+        pad_grad.setColorAt(0.0, QColor(58, 50, 46, 215))
+        pad_grad.setColorAt(0.5, QColor(34, 30, 27, 198))
+        pad_grad.setColorAt(1.0, QColor(20, 18, 17, 228))
+        painter.setBrush(pad_grad)
+        painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 195), 2.0))
+        painter.drawEllipse(QPointF(cx, cy), 68.0, 68.0)
+
+        # Anel concêntrico interior
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 45), 1.1))
+        painter.drawEllipse(QPointF(cx, cy), 56.0, 56.0)
+
+        # Desenho vetorial das cristas de Impressão Digital
+        pen = QPen(accent if (self._verified or self._scanning) else QColor(94, 252, 232, 230), 2.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+
+        for r_w, r_h, start_deg, span_deg in (
+            (36.0, 42.0, 22, 136),
+            (27.0, 33.0, 15, 150),
+            (18.0, 24.0, 8, 164),
+            (9.5, 14.5, 0, 180),
+        ):
+            arc = QPainterPath()
+            rect = QRectF(cx - r_w, cy - r_h * 0.85, r_w * 2.0, r_h * 1.75)
+            arc.arcMoveTo(rect, start_deg)
+            arc.arcTo(rect, start_deg, span_deg)
+            painter.drawPath(arc)
+
+        # Linhas inferiores da impressão digital
+        painter.drawLine(QPointF(cx, cy - 5.0), QPointF(cx, cy + 29.0))
+        painter.drawLine(QPointF(cx - 9.5, cy + 2.0), QPointF(cx - 12.0, cy + 26.0))
+        painter.drawLine(QPointF(cx + 9.5, cy + 2.0), QPointF(cx + 12.0, cy + 26.0))
+        painter.drawLine(QPointF(cx - 18.5, cy + 7.0), QPointF(cx - 22.0, cy + 21.0))
+        painter.drawLine(QPointF(cx + 18.5, cy + 7.0), QPointF(cx + 22.0, cy + 21.0))
+
+
 class BridgeSignals(QObject):
     biometricVerified = pyqtSignal(object)
+    pcBiometricFailed = pyqtSignal(str)
     qrUrlUpdated = pyqtSignal(str)
     logMessage = pyqtSignal(str)
 
@@ -653,6 +756,7 @@ class CriptexMainWindow(QMainWindow):
 
         self.signals = BridgeSignals()
         self.signals.biometricVerified.connect(self._on_biometric_verified_ui)
+        self.signals.pcBiometricFailed.connect(self._on_pc_biometric_failed_ui)
         self.signals.qrUrlUpdated.connect(self._render_qr_code_url)
         self.signals.logMessage.connect(self._append_security_log)
 
@@ -666,12 +770,17 @@ class CriptexMainWindow(QMainWindow):
             on_log=lambda msg: self.signals.logMessage.emit(msg),
             on_qr_url_updated=lambda url: self.signals.qrUrlUpdated.emit(url),
         )
+        self.pc_bio_auth = PcBiometricAuthenticator(
+            vault_storage=self.vault_storage,
+            on_log=lambda msg: self.signals.logMessage.emit(msg),
+        )
 
         self.current_master_key: Optional[str] = None
         self.active_usb_drive: Optional[UsbDriveInfo] = None
         self.biometric_unlocked: bool = False
         self.last_bio_result: Optional[BiometricAuthResult] = None
         self._detected_drives: List[UsbDriveInfo] = []
+        self._pc_bio_scanning: bool = False
 
         # Contentor Principal com Barra Superior em Vidro Fumado
         master_widget = QWidget()
@@ -685,9 +794,11 @@ class CriptexMainWindow(QMainWindow):
         tb_layout = QHBoxLayout(top_bar)
         tb_layout.setContentsMargins(22, 0, 22, 0)
 
-        lbl_brand = QLabel("Criptex Security Suite  •  Liquid Glass Edition")
+        lbl_brand = QLabel(
+            f"{tr('Criptex Security Suite  •  Liquid Glass Edition')}   •   {tr('Idioma do Sistema')}: {get_detected_language_Summary()}"
+        )
         lbl_brand.setStyleSheet("font-size: 12px; font-weight: 600; color: #f4f1ee; letter-spacing: 0.4px;")
-        self.lbl_header_status = QLabel("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256")
+        self.lbl_header_status = QLabel(tr("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256"))
         self.lbl_header_status.setStyleSheet("font-size: 12px; color: #5efce8;")
         tb_layout.addWidget(lbl_brand)
         tb_layout.addStretch()
@@ -770,46 +881,120 @@ class CriptexMainWindow(QMainWindow):
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(22)
 
-        # Painel Esquerdo: Fator 1 — Autenticação Biométrica no Smartphone
+        # Painel Esquerdo: Fator 1 — Autenticação Biométrica (Escolha entre QR Code ou Impressão Digital do PC)
         qr_card = QFrame()
         qr_card.setObjectName("Card")
         qr_layout = QVBoxLayout(qr_card)
-        qr_layout.setContentsMargins(24, 22, 24, 22)
-        qr_layout.setSpacing(12)
+        qr_layout.setContentsMargins(24, 20, 24, 20)
+        qr_layout.setSpacing(10)
 
-        lbl_hero = QLabel("Criptex Vault")
+        lbl_hero = QLabel(tr("Criptex Vault"))
         lbl_hero.setObjectName("HeroTitle")
         qr_layout.addWidget(lbl_hero)
 
-        lbl_sec1 = QLabel("1. Verificação Biométrica via Smartphone")
+        lbl_sec1 = QLabel(tr("1. Verificação Biométrica (Smartphone QR ou Impressão Digital do PC)"))
         lbl_sec1.setObjectName("SectionTitle")
         qr_layout.addWidget(lbl_sec1)
 
+        # Seletor em Vidro Fumado & Spotlight: Smartphone QR vs Impressão Digital do PC
+        self.bio_method_nav = GlassSpotlightNavBar(
+            [
+                ("qr", tr("Smartphone (Código QR)")),
+                ("fingerprint", tr("Impressão Digital do PC")),
+            ]
+        )
+        qr_layout.addWidget(self.bio_method_nav)
+
+        self.bio_method_stack = QStackedWidget()
+
+        # --- Página 0: Smartphone (Código QR) ---
+        qr_page = QWidget()
+        qr_page_layout = QVBoxLayout(qr_page)
+        qr_page_layout.setContentsMargins(0, 4, 0, 0)
+        qr_page_layout.setSpacing(8)
+
         lbl_sub = QLabel(
-            "Digitalize o código QR abaixo com o seu smartphone para validar a sua Impressão Digital "
-            "ou FaceID (WebAuthn) na rede local."
+            tr(
+                "Digitalize o código QR abaixo com o seu smartphone para validar a sua Impressão Digital "
+                "ou FaceID (WebAuthn) na rede local."
+            )
         )
         lbl_sub.setWordWrap(True)
         lbl_sub.setObjectName("Subtle")
-        qr_layout.addWidget(lbl_sub)
+        qr_page_layout.addWidget(lbl_sub)
 
         self.qr_image_label = QLabel()
         self.qr_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_image_label.setFixedSize(240, 240)
+        self.qr_image_label.setFixedSize(210, 210)
         self.qr_image_label.setStyleSheet(
-            "background-color: #ffffff; border: 2px solid rgba(94, 252, 232, 0.55); border-radius: 20px; padding: 10px;"
+            "background-color: #ffffff; border: 2px solid rgba(94, 252, 232, 0.55); border-radius: 20px; padding: 8px;"
         )
         qr_center = QHBoxLayout()
         qr_center.addStretch()
         qr_center.addWidget(self.qr_image_label)
         qr_center.addStretch()
-        qr_layout.addLayout(qr_center)
+        qr_page_layout.addLayout(qr_center)
 
-        self.qr_url_label = QLabel("A iniciar servidor HTTPS local...")
+        self.qr_url_label = QLabel(tr("A iniciar servidor HTTPS local..."))
         self.qr_url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_url_label.setStyleSheet("font-family: Consolas, monospace; color: #5efce8; font-size: 11px;")
         self.qr_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        qr_layout.addWidget(self.qr_url_label)
+        qr_page_layout.addWidget(self.qr_url_label)
+
+        qr_btns = QHBoxLayout()
+        btn_refresh_qr = QPushButton(tr("Gerar Novo QR Code"))
+        btn_refresh_qr.clicked.connect(self._start_biometric_qr_session)
+        btn_copy_qr_url = QPushButton(tr("Copiar Endereço HTTPS"))
+        btn_copy_qr_url.clicked.connect(lambda: QApplication.clipboard().setText(self.bio_server.get_qr_url()))
+        qr_btns.addWidget(btn_refresh_qr)
+        qr_btns.addWidget(btn_copy_qr_url)
+        qr_page_layout.addLayout(qr_btns)
+        self.bio_method_stack.addWidget(qr_page)
+
+        # --- Página 1: Impressão Digital do PC (Windows Hello / Sensor Biométrico) ---
+        pc_page = QWidget()
+        pc_page_layout = QVBoxLayout(pc_page)
+        pc_page_layout.setContentsMargins(0, 4, 0, 0)
+        pc_page_layout.setSpacing(10)
+
+        lbl_pc_sub = QLabel(
+            tr(
+                "Utilize o leitor de Impressão Digital integrado no seu computador (Windows Hello / WinBio) "
+                "para desbloquear o Criptex sem precisar do smartphone."
+            )
+        )
+        lbl_pc_sub.setWordWrap(True)
+        lbl_pc_sub.setObjectName("Subtle")
+        pc_page_layout.addWidget(lbl_pc_sub)
+
+        self.pc_fingerprint_orb = PcFingerprintOrbWidget()
+        self.pc_fingerprint_orb.clicked.connect(self._trigger_pc_fingerprint_scan)
+        orb_center = QHBoxLayout()
+        orb_center.addStretch()
+        orb_center.addWidget(self.pc_fingerprint_orb)
+        orb_center.addStretch()
+        pc_page_layout.addLayout(orb_center)
+
+        avail, avail_desc = self.pc_bio_auth.check_sensor_status()
+        self.pc_sensor_info_label = QLabel(f"{tr('Estado do Sensor Biométrico do PC:')}\n{avail_desc}")
+        self.pc_sensor_info_label.setWordWrap(True)
+        self.pc_sensor_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pc_sensor_info_label.setStyleSheet(
+            "font-family: Consolas, monospace; color: #5efce8; font-size: 11px;"
+            if avail
+            else "font-family: Consolas, monospace; color: #f7d070; font-size: 11px;"
+        )
+        pc_page_layout.addWidget(self.pc_sensor_info_label)
+
+        self.btn_scan_pc_fingerprint = QPushButton(tr("Validar Impressão Digital no Computador"))
+        self.btn_scan_pc_fingerprint.setObjectName("PrimaryBtn")
+        self.btn_scan_pc_fingerprint.setFixedHeight(40)
+        self.btn_scan_pc_fingerprint.clicked.connect(self._trigger_pc_fingerprint_scan)
+        pc_page_layout.addWidget(self.btn_scan_pc_fingerprint)
+        self.bio_method_stack.addWidget(pc_page)
+
+        self.bio_method_nav.tabSelected.connect(self.bio_method_stack.setCurrentIndex)
+        qr_layout.addWidget(self.bio_method_stack)
 
         self.bio_pairing_info_label = QLabel()
         self.bio_pairing_info_label.setWordWrap(True)
@@ -820,22 +1005,13 @@ class CriptexMainWindow(QMainWindow):
         )
         qr_layout.addWidget(self.bio_pairing_info_label)
 
-        self.bio_status_badge = QLabel("Aguardando leitura biométrica no smartphone...")
+        self.bio_status_badge = QLabel(tr("Aguardando leitura biométrica no smartphone..."))
         self.bio_status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bio_status_badge.setStyleSheet(
             "background-color: rgba(54, 42, 22, 0.62); border: 1px solid rgba(245, 194, 87, 0.48); "
             "border-radius: 14px; color: #f7d070; padding: 9px; font-size: 12px; font-weight: 600;"
         )
         qr_layout.addWidget(self.bio_status_badge)
-
-        qr_btns = QHBoxLayout()
-        btn_refresh_qr = QPushButton("Gerar Novo QR Code")
-        btn_refresh_qr.clicked.connect(self._start_biometric_qr_session)
-        btn_copy_qr_url = QPushButton("Copiar Endereço HTTPS")
-        btn_copy_qr_url.clicked.connect(lambda: QApplication.clipboard().setText(self.bio_server.get_qr_url()))
-        qr_btns.addWidget(btn_refresh_qr)
-        qr_btns.addWidget(btn_copy_qr_url)
-        qr_layout.addLayout(qr_btns)
 
         qr_layout.addStretch()
         root.addWidget(qr_card, 5)
@@ -847,20 +1023,22 @@ class CriptexMainWindow(QMainWindow):
         r_layout.setContentsMargins(24, 22, 24, 22)
         r_layout.setSpacing(12)
 
-        lbl_usb_title = QLabel("2. Chave da Cifra de Vigenère (Pen USB Física)")
+        lbl_usb_title = QLabel(tr("2. Chave da Cifra de Vigenère (Pen USB Física)"))
         lbl_usb_title.setObjectName("SectionTitle")
         r_layout.addWidget(lbl_usb_title)
 
         desc_usb = QLabel(
-            "A palavra-chave da Cifra de Vigenère é armazenada exclusivamente numa Pen USB física.\n"
-            "• Com Biometria + Pen USB Física: O cofre abre e desencripta as passwords e ficheiros.\n"
-            "• Sem Pen USB Física (ex: smartphone roubado): O Criptex abre, mas todos os dados permanecem encriptados."
+            tr(
+                "A palavra-chave da Cifra de Vigenère é armazenada exclusivamente numa Pen USB física.\n"
+                "• Com Biometria + Pen USB Física: O cofre abre e desencripta as passwords e ficheiros.\n"
+                "• Sem Pen USB Física (ex: smartphone roubado): O Criptex abre, mas todos os dados permanecem encriptados."
+            )
         )
         desc_usb.setWordWrap(True)
         desc_usb.setObjectName("Subtle")
         r_layout.addWidget(desc_usb)
 
-        self.usb_status_badge = QLabel("A verificar dispositivos USB ligados...")
+        self.usb_status_badge = QLabel(tr("A verificar dispositivos USB ligados..."))
         self.usb_status_badge.setWordWrap(True)
         self.usb_status_badge.setStyleSheet(
             "background-color: #281216; border: 1px solid #da3633; border-radius: 5px; color: #ffa198; "
@@ -870,7 +1048,7 @@ class CriptexMainWindow(QMainWindow):
 
         usb_sel_row = QHBoxLayout()
         self.usb_combo = QComboBox()
-        btn_scan_usb = QPushButton("Atualizar Lista USB")
+        btn_scan_usb = QPushButton(tr("Atualizar Lista USB"))
         btn_scan_usb.clicked.connect(self._refresh_usb_drives_list)
         usb_sel_row.addWidget(self.usb_combo, 1)
         usb_sel_row.addWidget(btn_scan_usb)
@@ -883,38 +1061,38 @@ class CriptexMainWindow(QMainWindow):
         p_layout.setContentsMargins(14, 12, 14, 12)
         p_layout.setSpacing(8)
 
-        lbl_p = QLabel("Configurar ou Gravar Chave Vigenère na Pen USB:")
+        lbl_p = QLabel(tr("Configurar ou Gravar Chave Vigenère na Pen USB:"))
         lbl_p.setStyleSheet("font-weight: 600; color: #f0f6fc; font-size: 12px;")
         p_layout.addWidget(lbl_p)
 
         key_row = QHBoxLayout()
         self.usb_custom_key_edit = MaskedVaultLineEdit(
             self.shield,
-            placeholder="Palavra-chave personalizada (ou deixe em branco para gerar chave automática de 48 bytes)...",
+            placeholder=tr("Palavra-chave personalizada (ou deixe em branco para gerar chave automática de 48 bytes)..."),
             secret_field=True,
         )
-        btn_vk = QPushButton("Teclado Virtual")
+        btn_vk = QPushButton(tr("Teclado Virtual"))
         btn_vk.clicked.connect(self._open_virtual_keypad_for_master)
         key_row.addWidget(self.usb_custom_key_edit, 1)
         key_row.addWidget(btn_vk)
         p_layout.addLayout(key_row)
 
         prov_btns = QHBoxLayout()
-        btn_provision_usb = QPushButton("Gravar Chave na Pen USB Selecionada")
+        btn_provision_usb = QPushButton(tr("Gravar Chave na Pen USB Selecionada"))
         btn_provision_usb.clicked.connect(self._provision_selected_usb)
         prov_btns.addWidget(btn_provision_usb)
         p_layout.addLayout(prov_btns)
 
         r_layout.addWidget(prov_box)
 
-        self.btn_enter_vault = QPushButton("Aguardando Confirmação Biométrica...")
+        self.btn_enter_vault = QPushButton(tr("Aguardando Confirmação Biométrica..."))
         self.btn_enter_vault.setObjectName("PrimaryBtn")
         self.btn_enter_vault.setFixedHeight(42)
         self.btn_enter_vault.setEnabled(False)
         self.btn_enter_vault.clicked.connect(self._attempt_unlock_vault)
         r_layout.addWidget(self.btn_enter_vault)
 
-        lbl_log = QLabel("Registo de Eventos e Auditoria:")
+        lbl_log = QLabel(tr("Registo de Eventos e Auditoria:"))
         lbl_log.setObjectName("SectionTitle")
         r_layout.addWidget(lbl_log)
 
@@ -939,32 +1117,32 @@ class CriptexMainWindow(QMainWindow):
         b_layout = QHBoxLayout(banner)
         b_layout.setContentsMargins(16, 9, 16, 9)
 
-        self.lbl_shield_state = QLabel("Proteção Ativa")
+        self.lbl_shield_state = QLabel(tr("Proteção Ativa"))
         self.lbl_shield_state.setStyleSheet("font-weight: 700; color: #5efce8; font-size: 13px;")
         b_layout.addWidget(self.lbl_shield_state)
 
-        self.lbl_usb_vault_state = QLabel("Pen USB: A verificar...")
+        self.lbl_usb_vault_state = QLabel(tr("Pen USB: A verificar..."))
         self.lbl_usb_vault_state.setStyleSheet(
             "background-color: rgba(18, 56, 48, 0.65); border: 1px solid #5efce8; border-radius: 12px; color: #5efce8; "
             "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_usb_vault_state)
 
-        self.lbl_net_state = QLabel("Internet: Cortada")
+        self.lbl_net_state = QLabel(tr("Internet: Cortada"))
         self.lbl_net_state.setStyleSheet(
             "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 12px; color: #ffa198; "
             "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_net_state)
 
-        self.lbl_kbd_state = QLabel("Teclado: Mascarado")
+        self.lbl_kbd_state = QLabel(tr("Teclado: Mascarado"))
         self.lbl_kbd_state.setStyleSheet(
             "background-color: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 12px; color: #f4f1ee; "
             "padding: 5px 12px; font-size: 12px; font-weight: 600;"
         )
         b_layout.addWidget(self.lbl_kbd_state)
 
-        self.lbl_stream_state = QLabel("Anti-Gravação: Ativo")
+        self.lbl_stream_state = QLabel(tr("Anti-Gravação: Ativo"))
         self.lbl_stream_state.setStyleSheet(
             "background-color: rgba(20, 62, 58, 0.58); border: 1px solid rgba(94, 252, 232, 0.45); border-radius: 12px; color: #5efce8; "
             "padding: 5px 12px; font-size: 12px; font-weight: 600;"
@@ -973,7 +1151,7 @@ class CriptexMainWindow(QMainWindow):
 
         b_layout.addStretch()
 
-        btn_lock = QPushButton("Trancar Cofre e Restaurar Internet")
+        btn_lock = QPushButton(tr("Trancar Cofre e Restaurar Internet"))
         btn_lock.setObjectName("DangerBtn")
         btn_lock.clicked.connect(self.lock_vault)
         b_layout.addWidget(btn_lock)
@@ -986,9 +1164,11 @@ class CriptexMainWindow(QMainWindow):
         w_layout = QHBoxLayout(self.no_usb_warning_banner)
         w_layout.setContentsMargins(16, 10, 16, 10)
         self.lbl_no_usb_warning = QLabel(
-            "Aviso de Segurança (Pen USB Ausente): O Criptex foi desbloqueado apenas com a biometria do smartphone, "
-            "mas a Pen USB física com a palavra-chave da Cifra de Vigenère não se encontra ligada ao computador. "
-            "Todos os dados (passwords e ficheiros) permanecem encriptados. Insira a Pen USB para desencriptar."
+            tr(
+                "Aviso de Segurança (Pen USB Ausente): O Criptex foi desbloqueado apenas com a biometria do smartphone, "
+                "mas a Pen USB física com a palavra-chave da Cifra de Vigenère não se encontra ligada ao computador. "
+                "Todos os dados (passwords e ficheiros) permanecem encriptados. Insira a Pen USB para desencriptar."
+            )
         )
         self.lbl_no_usb_warning.setWordWrap(True)
         self.lbl_no_usb_warning.setStyleSheet("color: #ffa198; font-weight: 600; font-size: 12px;")
@@ -999,11 +1179,11 @@ class CriptexMainWindow(QMainWindow):
         # Barra de Navegação Cápsula em Vidro Fumado com Spotlight ('Liquid Glass Nav Bar')
         self.glass_nav = GlassSpotlightNavBar(
             [
-                ("passwords", "Passwords"),
-                ("files", "Ficheiros (.crpx)"),
-                ("matrix", "Matriz Vigenère"),
-                ("shield", "Escudo & Sistema"),
-                ("settings", "Dispositivos"),
+                ("passwords", tr("Passwords")),
+                ("files", tr("Ficheiros (.crpx)")),
+                ("matrix", tr("Matriz Vigenère")),
+                ("shield", tr("Escudo & Sistema")),
+                ("settings", tr("Dispositivos")),
             ]
         )
         v_root.addWidget(self.glass_nav)
@@ -1011,11 +1191,11 @@ class CriptexMainWindow(QMainWindow):
         # Separadores do Cofre
         self.tabs = QTabWidget()
         self.tabs.tabBar().setVisible(False)
-        self.tabs.addTab(self._build_passwords_tab(), "Passwords (Cifra de Vigenère)")
-        self.tabs.addTab(self._build_files_tab(), "Ficheiros Cifrados (.crpx)")
-        self.tabs.addTab(self._build_vigenere_inspector_tab(), "Inspetor da Cifra de Vigenère")
-        self.tabs.addTab(self._build_security_center_tab(), "Segurança & Monitorização")
-        self.tabs.addTab(self._build_settings_tab(), "Definições & Dispositivos")
+        self.tabs.addTab(self._build_passwords_tab(), tr("Passwords (Cifra de Vigenère)"))
+        self.tabs.addTab(self._build_files_tab(), tr("Ficheiros Cifrados (.crpx)"))
+        self.tabs.addTab(self._build_vigenere_inspector_tab(), tr("Inspetor da Cifra de Vigenère"))
+        self.tabs.addTab(self._build_security_center_tab(), tr("Segurança & Monitorização"))
+        self.tabs.addTab(self._build_settings_tab(), tr("Definições & Dispositivos"))
         self.glass_nav.tabSelected.connect(self.tabs.setCurrentIndex)
         self.tabs.currentChanged.connect(self.glass_nav.set_active_index)
         v_root.addWidget(self.tabs, 1)
@@ -1025,9 +1205,9 @@ class CriptexMainWindow(QMainWindow):
         chaff_bar.setObjectName("Card")
         c_layout = QHBoxLayout(chaff_bar)
         c_layout.setContentsMargins(16, 8, 16, 8)
-        lbl_c = QLabel("Proteção Anti-Keylogger (Ruído externo gerado):")
+        lbl_c = QLabel(tr("Proteção Anti-Keylogger (Ruído externo gerado):"))
         lbl_c.setStyleSheet("color: rgba(244, 241, 238, 0.72); font-weight: 600; font-size: 12px;")
-        self.lbl_chaff_stream = QLabel("A aguardar digitação dentro do cofre...")
+        self.lbl_chaff_stream = QLabel(tr("A aguardar digitação dentro do cofre..."))
         self.lbl_chaff_stream.setStyleSheet("font-family: Consolas, monospace; color: #5efce8; font-size: 12px;")
         c_layout.addWidget(lbl_c)
         c_layout.addWidget(self.lbl_chaff_stream, 1)
@@ -1044,13 +1224,13 @@ class CriptexMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         left = QVBoxLayout()
-        self.lbl_pw_table_header = QLabel("Passwords Guardadas (Encriptadas com Cifra de Vigenère)")
+        self.lbl_pw_table_header = QLabel(tr("Passwords Guardadas (Encriptadas com Cifra de Vigenère)"))
         self.lbl_pw_table_header.setObjectName("SectionTitle")
         left.addWidget(self.lbl_pw_table_header)
 
         self.pw_table = QTableWidget(0, 5)
         self.pw_table.setHorizontalHeaderLabels(
-            ["ID", "Serviço / Título", "Utilizador", "Password Cifrada (Vigenère)", "Token Criptográfico"]
+            ["ID", tr("Serviço / Título"), tr("Utilizador"), tr("Password Cifrada (Vigenère)"), tr("Token Criptográfico")]
         )
         self.pw_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.pw_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -1059,11 +1239,11 @@ class CriptexMainWindow(QMainWindow):
         left.addWidget(self.pw_table, 1)
 
         btn_row = QHBoxLayout()
-        self.btn_reveal_pw = QPushButton("Desencriptar e Mostrar Password")
+        self.btn_reveal_pw = QPushButton(tr("Desencriptar e Mostrar Password"))
         self.btn_reveal_pw.clicked.connect(self._reveal_selected_password)
-        self.btn_inspect_pw = QPushButton("Inspecionar na Matriz Vigenère")
+        self.btn_inspect_pw = QPushButton(tr("Inspecionar na Matriz Vigenère"))
         self.btn_inspect_pw.clicked.connect(self._inspect_selected_password_in_matrix)
-        self.btn_del_pw = QPushButton("Eliminar Registo")
+        self.btn_del_pw = QPushButton(tr("Eliminar Registo"))
         self.btn_del_pw.setObjectName("DangerBtn")
         self.btn_del_pw.clicked.connect(self._delete_selected_password)
         btn_row.addWidget(self.btn_reveal_pw)
@@ -1079,17 +1259,17 @@ class CriptexMainWindow(QMainWindow):
         f_layout.setContentsMargins(18, 18, 18, 18)
         f_layout.setSpacing(9)
 
-        lbl_f = QLabel("Adicionar Nova Password")
+        lbl_f = QLabel(tr("Adicionar Nova Password"))
         lbl_f.setObjectName("SectionTitle")
         f_layout.addWidget(lbl_f)
 
-        self.pw_title_edit = MaskedVaultLineEdit(self.shield, "Ex: Banco, Email, Servidor")
-        self.pw_user_edit = MaskedVaultLineEdit(self.shield, "Utilizador ou Email")
-        self.pw_url_edit = MaskedVaultLineEdit(self.shield, "URL (ex: https://...)")
+        self.pw_title_edit = MaskedVaultLineEdit(self.shield, tr("Ex: Banco, Email, Servidor"))
+        self.pw_user_edit = MaskedVaultLineEdit(self.shield, tr("Utilizador ou Email"))
+        self.pw_url_edit = MaskedVaultLineEdit(self.shield, tr("URL (ex: https://...)"))
         self.pw_secret_edit = MaskedVaultLineEdit(
-            self.shield, "Password secreta (cifrada com a chave da Pen USB)", secret_field=True
+            self.shield, tr("Password secreta (cifrada com a chave da Pen USB)"), secret_field=True
         )
-        self.pw_notes_edit = MaskedVaultLineEdit(self.shield, "Notas adicionais")
+        self.pw_notes_edit = MaskedVaultLineEdit(self.shield, tr("Notas adicionais"))
 
         for w in (
             self.pw_title_edit,
@@ -1102,24 +1282,24 @@ class CriptexMainWindow(QMainWindow):
 
         self.pw_secret_edit.textChanged.connect(self._update_live_vigenere_pw_preview)
 
-        f_layout.addWidget(QLabel("Título / Serviço:"))
+        f_layout.addWidget(QLabel(tr("Título / Serviço:")))
         f_layout.addWidget(self.pw_title_edit)
-        f_layout.addWidget(QLabel("Utilizador:"))
+        f_layout.addWidget(QLabel(tr("Utilizador:")))
         f_layout.addWidget(self.pw_user_edit)
-        f_layout.addWidget(QLabel("URL / Endereço:"))
+        f_layout.addWidget(QLabel(tr("URL / Endereço:")))
         f_layout.addWidget(self.pw_url_edit)
-        f_layout.addWidget(QLabel("Password (Input Protegido):"))
+        f_layout.addWidget(QLabel(tr("Password (Input Protegido):")))
 
         sec_row = QHBoxLayout()
         sec_row.addWidget(self.pw_secret_edit, 1)
-        btn_vk_pw = QPushButton("Teclado")
-        btn_vk_pw.setToolTip("Abrir Teclado Virtual Seguro")
+        btn_vk_pw = QPushButton(tr("Teclado"))
+        btn_vk_pw.setToolTip(tr("Abrir Teclado Virtual Seguro"))
         btn_vk_pw.clicked.connect(self._open_virtual_keypad_for_pw)
         sec_row.addWidget(btn_vk_pw)
         f_layout.addLayout(sec_row)
 
-        f_layout.addWidget(QLabel("Pré-visualização da Cifra de Vigenère:"))
-        self.lbl_live_vig_preview = QLabel("A aguardar introdução...")
+        f_layout.addWidget(QLabel(tr("Pré-visualização da Cifra de Vigenère:")))
+        self.lbl_live_vig_preview = QLabel(tr("A aguardar introdução..."))
         self.lbl_live_vig_preview.setWordWrap(True)
         self.lbl_live_vig_preview.setStyleSheet(
             "background-color: rgba(18, 16, 15, 0.58); border: 1px solid rgba(94, 252, 232, 0.35); border-radius: 13px; padding: 9px; "
@@ -1127,16 +1307,16 @@ class CriptexMainWindow(QMainWindow):
         )
         f_layout.addWidget(self.lbl_live_vig_preview)
 
-        f_layout.addWidget(QLabel("Notas:"))
+        f_layout.addWidget(QLabel(tr("Notas:")))
         f_layout.addWidget(self.pw_notes_edit)
 
-        self.btn_save_pw = QPushButton("Cifrar com Chave USB e Guardar")
+        self.btn_save_pw = QPushButton(tr("Cifrar com Chave USB e Guardar"))
         self.btn_save_pw.setObjectName("PrimaryBtn")
         self.btn_save_pw.clicked.connect(self._save_password_entry)
         f_layout.addWidget(self.btn_save_pw)
 
         self.lbl_revealed_box = QLabel(
-            "Selecione um registo na tabela e clique em 'Desencriptar e Mostrar Password'."
+            tr("Selecione um registo na tabela e clique em 'Desencriptar e Mostrar Password'.")
         )
         self.lbl_revealed_box.setWordWrap(True)
         self.lbl_revealed_box.setStyleSheet(
@@ -1159,7 +1339,7 @@ class CriptexMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         left = QVBoxLayout()
-        lbl_f = QLabel("Ficheiros Guardados no Cofre (Modificados ao Nível de Bytes com Vigenère)")
+        lbl_f = QLabel(tr("Ficheiros Guardados no Cofre (Modificados ao Nível de Bytes com Vigenère)"))
         lbl_f.setObjectName("SectionTitle")
         left.addWidget(lbl_f)
 
@@ -1167,11 +1347,11 @@ class CriptexMainWindow(QMainWindow):
         self.files_table.setHorizontalHeaderLabels(
             [
                 "ID",
-                "Nome do Ficheiro",
-                "Contentor (.crpx)",
-                "Tamanho (Bytes)",
-                "Amostra Hex Vigenère",
-                "Data",
+                tr("Nome do Ficheiro"),
+                tr("Contentor (.crpx)"),
+                tr("Tamanho (Bytes)"),
+                tr("Amostra Hex Vigenère"),
+                tr("Data"),
             ]
         )
         self.files_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1181,19 +1361,19 @@ class CriptexMainWindow(QMainWindow):
         left.addWidget(self.files_table, 1)
 
         self.chk_shred_source = QCheckBox(
-            "Eliminar de forma segura (Shred) o ficheiro original fora do cofre após a importação"
+            tr("Eliminar de forma segura (Shred) o ficheiro original fora do cofre após a importação")
         )
         left.addWidget(self.chk_shred_source)
 
         actions = QHBoxLayout()
-        self.btn_import_file = QPushButton("Importar e Cifrar Ficheiro")
+        self.btn_import_file = QPushButton(tr("Importar e Cifrar Ficheiro"))
         self.btn_import_file.setObjectName("PrimaryBtn")
         self.btn_import_file.clicked.connect(self._import_file_to_vault)
 
-        self.btn_export_file = QPushButton("Desencriptar e Exportar Ficheiro")
+        self.btn_export_file = QPushButton(tr("Desencriptar e Exportar Ficheiro"))
         self.btn_export_file.clicked.connect(self._export_file_from_vault)
 
-        self.btn_del_file = QPushButton("Eliminar do Cofre")
+        self.btn_del_file = QPushButton(tr("Eliminar do Cofre"))
         self.btn_del_file.setObjectName("DangerBtn")
         self.btn_del_file.clicked.connect(self._delete_file_from_vault)
 
@@ -1209,13 +1389,15 @@ class CriptexMainWindow(QMainWindow):
         i_layout = QVBoxLayout(inspect_card)
         i_layout.setContentsMargins(16, 16, 16, 16)
 
-        lbl_i = QLabel("Inspeção Binária do Ficheiro no Cofre")
+        lbl_i = QLabel(tr("Inspeção Binária do Ficheiro no Cofre"))
         lbl_i.setObjectName("SectionTitle")
         i_layout.addWidget(lbl_i)
 
         lbl_sub = QLabel(
-            "Compara os bytes originais com os bytes cifrados pela Cifra de Vigenère dentro do cofre. "
-            "Sem a Pen USB inserida, apenas os bytes encriptados são visíveis."
+            tr(
+                "Compara os bytes originais com os bytes cifrados pela Cifra de Vigenère dentro do cofre. "
+                "Sem a Pen USB inserida, apenas os bytes encriptados são visíveis."
+            )
         )
         lbl_sub.setWordWrap(True)
         lbl_sub.setObjectName("Subtle")
@@ -1238,17 +1420,17 @@ class CriptexMainWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        lbl = QLabel("Verificador da Cifra de Vigenère (Mod 256 & ASCII)")
+        lbl = QLabel(tr("Verificador da Cifra de Vigenère (Mod 256 & ASCII)"))
         lbl.setObjectName("SectionTitle")
         layout.addWidget(lbl)
 
         top_row = QHBoxLayout()
         self.vig_test_input = MaskedVaultLineEdit(
-            self.shield, "Introduza um texto ou password para analisar os deslocamentos da cifra..."
+            self.shield, tr("Introduza um texto ou password para analisar os deslocamentos da cifra...")
         )
         self.vig_test_input.chaffGenerated.connect(self._on_chaff_generated)
         self.vig_test_input.setText("SegredoConfidencial2026!")
-        btn_calc = QPushButton("Calcular Transformação")
+        btn_calc = QPushButton(tr("Calcular Transformação"))
         btn_calc.setObjectName("PrimaryBtn")
         btn_calc.clicked.connect(self._refresh_vigenere_inspector)
         top_row.addWidget(self.vig_test_input, 1)
@@ -1266,13 +1448,13 @@ class CriptexMainWindow(QMainWindow):
         self.vig_steps_table = QTableWidget(0, 7)
         self.vig_steps_table.setHorizontalHeaderLabels(
             [
-                "Índice (i)",
-                "Carácter Original",
-                "Byte P[i]",
-                "Carácter da Chave USB",
-                "Deslocamento K[i]",
-                "Fórmula Vigenère (Mod 256)",
-                "Byte Cifrado C[i]",
+                tr("Índice (i)"),
+                tr("Carácter Original"),
+                tr("Byte P[i]"),
+                tr("Carácter da Chave USB"),
+                tr("Deslocamento K[i]"),
+                tr("Fórmula Vigenère (Mod 256)"),
+                tr("Byte Cifrado C[i]"),
             ]
         )
         self.vig_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1292,7 +1474,7 @@ class CriptexMainWindow(QMainWindow):
         left_card.setObjectName("Card")
         l_layout = QVBoxLayout(left_card)
 
-        lbl_s = QLabel("Estado das Proteções do Sistema e Chave USB")
+        lbl_s = QLabel(tr("Estado das Proteções do Sistema e Chave USB"))
         lbl_s.setObjectName("SectionTitle")
         l_layout.addWidget(lbl_s)
 
@@ -1301,7 +1483,7 @@ class CriptexMainWindow(QMainWindow):
         self.security_details_box.setStyleSheet("font-family: Consolas, monospace; font-size: 12px; color: #c9d1d9;")
         l_layout.addWidget(self.security_details_box, 1)
 
-        btn_force_scan = QPushButton("Verificar e Fechar Aplicações de Gravação / Stream Agora")
+        btn_force_scan = QPushButton(tr("Verificar e Fechar Aplicações de Gravação / Stream Agora"))
         btn_force_scan.setObjectName("PrimaryBtn")
         btn_force_scan.clicked.connect(lambda: self.shield.scan_and_kill_streaming_apps())
         l_layout.addWidget(btn_force_scan)
@@ -1312,7 +1494,7 @@ class CriptexMainWindow(QMainWindow):
         right_card.setObjectName("Card")
         r_layout = QVBoxLayout(right_card)
 
-        lbl_ev = QLabel("Registo de Auditoria de Segurança")
+        lbl_ev = QLabel(tr("Registo de Auditoria de Segurança"))
         lbl_ev.setObjectName("SectionTitle")
         r_layout.addWidget(lbl_ev)
 
@@ -1338,15 +1520,14 @@ class CriptexMainWindow(QMainWindow):
         b_layout.setContentsMargins(20, 20, 20, 20)
         b_layout.setSpacing(12)
 
-        lbl_title = QLabel("Dispositivo Biométrico Registado (Smartphone Vinculado)")
+        lbl_title = QLabel(tr("Dispositivo Biométrico Registado (Smartphone Vinculado)"))
         lbl_title.setObjectName("SectionTitle")
         b_layout.addWidget(lbl_title)
 
         lbl_desc = QLabel(
-            "Após o primeiro uso do código QR e desbloqueio com o sistema biométrico do telemóvel, "
-            "esse dispositivo fica permanentemente vinculado ao cofre. Nenhum outro smartphone poderá "
-            "desbloquear o Criptex.\n\n"
-            "Para alterar ou substituir o telemóvel registado, é obrigatória a presença simultânea de:\n"
+            "Após o primeiro uso do código QR ou da Impressão Digital do PC, "
+            "esse método biométrico fica vinculado ao cofre.\n\n"
+            "Para alterar ou substituir o registo biométrico, é obrigatória a presença simultânea de:\n"
             "1. O desbloqueio biométrico original na sessão atual;\n"
             "2. A Pen USB física com a palavra-chave da Cifra de Vigenère inserida no computador."
         )
@@ -1367,7 +1548,7 @@ class CriptexMainWindow(QMainWindow):
         b_layout.addWidget(self.settings_auth_reqs_badge)
 
         self.btn_reset_bio_device = QPushButton(
-            "Desvincular Smartphone Atual e Autorizar Novo Registo Biométrico via QR"
+            tr("Desvincular Smartphone Atual e Autorizar Novo Registo Biométrico via QR")
         )
         self.btn_reset_bio_device.setObjectName("DangerBtn")
         self.btn_reset_bio_device.clicked.connect(self._reset_biometric_device_from_settings)
@@ -1383,7 +1564,7 @@ class CriptexMainWindow(QMainWindow):
         u_layout.setContentsMargins(20, 20, 20, 20)
         u_layout.setSpacing(12)
 
-        lbl_u_title = QLabel("Chave Física USB & Política de Acesso")
+        lbl_u_title = QLabel(tr("Chave Física USB & Política de Acesso"))
         lbl_u_title.setObjectName("SectionTitle")
         u_layout.addWidget(lbl_u_title)
 
@@ -1397,9 +1578,9 @@ class CriptexMainWindow(QMainWindow):
 
         lbl_policy = QLabel(
             "Política de Segurança Criptex:\n"
-            "• 1º Uso do QR Code: Regista automaticamente o telemóvel que efetuar o primeiro desbloqueio biométrico.\n"
-            "• Usos Seguintes: O servidor HTTPS local valida a credencial/token criptográfico do telemóvel e bloqueia qualquer outro dispositivo.\n"
-            "• Proteção contra Roubo: Se o telemóvel registado for utilizado sem a Pen USB física no PC, o cofre abre em modo restrito (todos os dados encriptados e as definições de dispositivo bloqueadas)."
+            "• Escolha Biométrica: Pode desbloquear o cofre através da Impressão Digital do PC (Windows Hello / WinBio) ou do Smartphone (Código QR).\n"
+            "• 1º Uso Biométrico: Regista automaticamente o dispositivo que efetuar o primeiro desbloqueio biométrico.\n"
+            "• Proteção contra Roubo: Se o desbloqueio biométrico for efetuado sem a Pen USB física no PC, o cofre abre em modo restrito (todos os dados encriptados)."
         )
         lbl_policy.setWordWrap(True)
         lbl_policy.setObjectName("Subtle")
@@ -1440,11 +1621,11 @@ class CriptexMainWindow(QMainWindow):
             self.current_master_key = None
             if self._detected_drives:
                 self.usb_status_badge.setText(
-                    "Pen USB detetada, mas sem ficheiro de chave (.criptex_usb_key.crpxkey). Clique em 'Gravar Chave na Pen USB Selecionada'."
+                    tr("Pen USB detetada, mas sem ficheiro de chave (.criptex_usb_key.crpxkey). Clique em 'Gravar Chave na Pen USB Selecionada'.")
                 )
             else:
                 self.usb_status_badge.setText(
-                    "Nenhuma Pen USB com chave detetada: Se abrir o Criptex apenas com o smartphone, todos os dados permanecerão encriptados."
+                    tr("Nenhuma Pen USB com chave detetada: Se abrir o Criptex apenas com o smartphone, todos os dados permanecerão encriptados.")
                 )
             self.usb_status_badge.setStyleSheet(
                 "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 14px; color: #ffa198; "
@@ -1505,17 +1686,58 @@ class CriptexMainWindow(QMainWindow):
         )
 
     # ==================================================================
-    # LÓGICA DE AUTENTICAÇÃO BIOMÉTRICA (QR CODE + WEBAUTHN)
+    # LÓGICA DE AUTENTICAÇÃO BIOMÉTRICA (QR CODE + IMPRESSÃO DIGITAL PC)
     # ==================================================================
+    def _trigger_pc_fingerprint_scan(self) -> None:
+        """
+        Inicia a leitura da Impressão Digital / Biometria do próprio computador
+        (Windows Hello / Windows Biometric Framework) numa thread em segundo plano.
+        """
+        if self._pc_bio_scanning:
+            return
+        self._pc_bio_scanning = True
+        self.pc_fingerprint_orb.set_state(verified=False, scanning=True)
+        self.btn_scan_pc_fingerprint.setEnabled(False)
+        self.btn_scan_pc_fingerprint.setText(tr("A aguardar leitura da Impressão Digital no sensor do PC..."))
+        self.bio_status_badge.setText(tr("A aguardar leitura da Impressão Digital no sensor do PC..."))
+        self.bio_status_badge.setStyleSheet(
+            "background-color: rgba(54, 42, 22, 0.62); border: 1px solid rgba(245, 194, 87, 0.48); border-radius: 14px; color: #f7d070; "
+            "padding: 9px; font-size: 12px; font-weight: 600;"
+        )
+
+        hwnd = int(self.winId())
+
+        def _worker() -> None:
+            ok, msg, result = self.pc_bio_auth.authenticate(hwnd=hwnd)
+            if ok and result is not None:
+                self.signals.biometricVerified.emit(result)
+            else:
+                self.signals.pcBiometricFailed.emit(
+                    msg or tr("Leitura biométrica cancelada ou não concluída no computador. Tente novamente ou use o Código QR.")
+                )
+
+        threading.Thread(target=_worker, daemon=True, name="CriptexPcBioWorker").start()
+
+    def _on_pc_biometric_failed_ui(self, err_msg: str) -> None:
+        self._pc_bio_scanning = False
+        self.pc_fingerprint_orb.set_state(verified=False, scanning=False)
+        self.btn_scan_pc_fingerprint.setEnabled(True)
+        self.btn_scan_pc_fingerprint.setText(tr("Validar Impressão Digital no Computador"))
+        self.bio_status_badge.setText(err_msg)
+        self.bio_status_badge.setStyleSheet(
+            "background-color: rgba(68, 22, 28, 0.62); border: 1px solid rgba(255, 123, 114, 0.50); border-radius: 14px; color: #ffa198; "
+            "padding: 9px; font-size: 12px; font-weight: 600;"
+        )
+
     def _refresh_bio_pairing_banner_on_lock_screen(self) -> None:
         bio_info = self.vault_storage.get_biometric_device_info()
         if bio_info.get("paired"):
-            dev_name = bio_info.get("device_name") or "Smartphone Registado"
+            dev_name = bio_info.get("device_name") or "Dispositivo Registado"
             cred_id = bio_info.get("credential_id") or "-"
             paired_at = bio_info.get("paired_at") or "-"
             self.bio_pairing_info_label.setText(
                 f"Dispositivo Vinculado: {dev_name} (ID: {cred_id[:18]} | Registado: {paired_at})\n"
-                f"Apenas este smartphone pode desbloquear o Criptex. Alteração disponível apenas nas Definições dentro do cofre."
+                f"Apenas este dispositivo biométrico pode desbloquear o Criptex. Alteração disponível apenas nas Definições dentro do cofre."
             )
             self.bio_pairing_info_label.setStyleSheet(
                 "background-color: rgba(18, 56, 48, 0.55); border: 1px solid rgba(94, 252, 232, 0.48); border-radius: 14px; padding: 9px; "
@@ -1523,8 +1745,10 @@ class CriptexMainWindow(QMainWindow):
             )
         else:
             self.bio_pairing_info_label.setText(
-                "1º Uso (Modo de Registo Inicial): Nenhum smartphone vinculado ainda.\n"
-                "O primeiro telemóvel a ler o QR Code e concluir o desbloqueio biométrico ficará registado neste cofre."
+                tr(
+                    "1º Uso (Modo de Registo Inicial): Nenhum smartphone vinculado ainda.\n"
+                    "O primeiro telemóvel a ler o QR Code e concluir o desbloqueio biométrico ficará registado neste cofre."
+                )
             )
             self.bio_pairing_info_label.setStyleSheet(
                 "background-color: rgba(20, 18, 17, 0.58); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 14px; padding: 9px; "
@@ -1533,9 +1757,14 @@ class CriptexMainWindow(QMainWindow):
 
     def _start_biometric_qr_session(self) -> None:
         self.biometric_unlocked = False
+        self._pc_bio_scanning = False
+        if hasattr(self, "pc_fingerprint_orb"):
+            self.pc_fingerprint_orb.set_state(verified=False, scanning=False)
+            self.btn_scan_pc_fingerprint.setEnabled(True)
+            self.btn_scan_pc_fingerprint.setText(tr("Validar Impressão Digital no Computador"))
         self._update_unlock_button_text()
         self._refresh_bio_pairing_banner_on_lock_screen()
-        self.bio_status_badge.setText("Aguardando leitura biométrica no smartphone...")
+        self.bio_status_badge.setText(tr("Aguardando leitura biométrica no smartphone..."))
         self.bio_status_badge.setStyleSheet(
             "background-color: rgba(54, 42, 22, 0.62); border: 1px solid rgba(245, 194, 87, 0.48); border-radius: 14px; color: #f7d070; "
             "padding: 9px; font-size: 12px; font-weight: 600;"
@@ -1557,16 +1786,21 @@ class CriptexMainWindow(QMainWindow):
         pil_img.save(buf, format="PNG")
         qimg = QImage.fromData(buf.getvalue(), "PNG")
         pix = QPixmap.fromImage(qimg).scaled(
-            220,
-            220,
+            194,
+            194,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self.qr_image_label.setPixmap(pix)
 
     def _on_biometric_verified_ui(self, result: BiometricAuthResult) -> None:
+        self._pc_bio_scanning = False
         self.biometric_unlocked = True
         self.last_bio_result = result
+        if hasattr(self, "pc_fingerprint_orb"):
+            self.pc_fingerprint_orb.set_state(verified=True, scanning=False)
+            self.btn_scan_pc_fingerprint.setEnabled(True)
+            self.btn_scan_pc_fingerprint.setText(tr("Validar Impressão Digital no Computador"))
         self._refresh_bio_pairing_banner_on_lock_screen()
         self.bio_status_badge.setText(
             f"Biometria Confirmada às {result.timestamp} ({result.mode})"
@@ -1576,12 +1810,12 @@ class CriptexMainWindow(QMainWindow):
             "padding: 9px; font-size: 12px; font-weight: 600;"
         )
         self._update_unlock_button_text()
-        self._append_security_log(f"Autenticação biométrica móvel validada ({result.device_info}).")
+        self._append_security_log(f"Autenticação biométrica validada ({result.device_info}).")
 
     def _update_unlock_button_text(self) -> None:
         if not self.biometric_unlocked:
             self.btn_enter_vault.setEnabled(False)
-            self.btn_enter_vault.setText("Aguardando Confirmação Biométrica...")
+            self.btn_enter_vault.setText(tr("Aguardando Confirmação Biométrica..."))
             return
 
         self.btn_enter_vault.setEnabled(True)
@@ -1591,7 +1825,7 @@ class CriptexMainWindow(QMainWindow):
             )
         else:
             self.btn_enter_vault.setText(
-                "Abrir Cofre Sem Pen USB (Modo Protegido — Dados Permanecerão Encriptados)"
+                tr("Abrir Cofre Sem Pen USB (Modo Protegido — Dados Permanecerão Encriptados)")
             )
 
     # ==================================================================
@@ -1601,8 +1835,8 @@ class CriptexMainWindow(QMainWindow):
         if not self.biometric_unlocked:
             QMessageBox.warning(
                 self,
-                "Biometria Obrigatória",
-                "O cofre Criptex requer a validação biométrica do smartphone antes de abrir.",
+                tr("Biometria Obrigatória"),
+                tr("O cofre Criptex requer a validação biométrica do smartphone antes de abrir."),
             )
             return
 

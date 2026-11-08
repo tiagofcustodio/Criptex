@@ -17,6 +17,8 @@ from criptex.vault.storage import CriptexVaultStorage
 from criptex.security.fortress import FortressShield
 from criptex.security.usb_key import UsbKeyManager
 from criptex.biometrics.webauthn_server import SmartphoneBiometricServer
+from criptex.biometrics.pc_biometrics import PcBiometricAuthenticator
+from criptex.i18n import detect_computer_locale, get_detected_language_Summary, tr
 
 
 class TestCriptexSuite(unittest.TestCase):
@@ -202,6 +204,22 @@ class TestCriptexSuite(unittest.TestCase):
             self.assertTrue(ok_new)
             self.assertTrue(storage.is_biometric_paired())
             server.stop()
+
+    def test_os_language_detection_and_translations(self) -> None:
+        lang_code, locale_tag = detect_computer_locale()
+        self.assertIn(lang_code, ("pt", "en", "es", "fr", "de", "it"))
+        self.assertTrue(len(locale_tag) >= 2)
+        self.assertIn(locale_tag, get_detected_language_Summary())
+        self.assertIsInstance(tr("Smartphone (Código QR)"), str)
+        self.assertIsInstance(tr("Impressão Digital do PC"), str)
+
+    def test_pc_biometrics_sensor_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = CriptexVaultStorage(base_dir=Path(tmpdir) / ".criptex_vault")
+            pc_bio = PcBiometricAuthenticator(vault_storage=storage)
+            available, desc = pc_bio.check_sensor_status()
+            self.assertIsInstance(available, bool)
+            self.assertTrue(len(desc) > 0)
 
 
 if __name__ == "__main__":
