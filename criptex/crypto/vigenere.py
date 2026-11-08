@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
@@ -47,6 +48,7 @@ class VigenereCipher:
     KEY_RING_LENGTH = 1021  # Número primo para evitar periodicidade curta
 
     @staticmethod
+    @functools.lru_cache(maxsize=2048)
     def derive_vigenere_key_ring(master_key: str, salt: bytes, pure_mode: bool = False) -> bytes:
         """
         Gera o anel de deslocamentos (key ring) da Cifra de Vigenère a partir da chave.
@@ -75,6 +77,7 @@ class VigenereCipher:
         return bytes(ring)
 
     @staticmethod
+    @functools.lru_cache(maxsize=2048)
     def derive_mac_key(master_key: str, salt: bytes) -> bytes:
         """Deriva uma sub-chave dedicada para autenticação de integridade HMAC-SHA256."""
         return hashlib.pbkdf2_hmac(

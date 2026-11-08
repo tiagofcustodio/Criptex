@@ -1855,12 +1855,12 @@ class CriptexMainWindow(QMainWindow):
 
         # Mudar imediatamente para o ecrã do cofre sem bloquear a thread gráfica
         self.stack.setCurrentWidget(self.vault_screen)
+        QApplication.processEvents()
         self.bio_server.stop()
 
         hwnd = int(self.winId())
         self.shield.engage_fortress(hwnd=hwnd, async_mode=True)
 
-        self._refresh_usb_drives_list()
         self._sync_vault_usb_lock_state()
 
     def _sync_vault_usb_lock_state(self) -> None:
@@ -1915,9 +1915,9 @@ class CriptexMainWindow(QMainWindow):
 
         self._refresh_passwords_table()
         self._refresh_files_table()
-        self._refresh_vigenere_inspector()
         self._refresh_shield_telemetry()
         self._refresh_settings_tab()
+        QTimer.singleShot(40, self._refresh_vigenere_inspector)
 
     def _refresh_settings_tab(self) -> None:
         bio_info = self.vault_storage.get_biometric_device_info()
@@ -2037,10 +2037,12 @@ class CriptexMainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         try:
+            self.shield.on_event = None
+            self.bio_server.on_log = None
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
             self.bio_server.stop()
-            self.shield.disengage_fortress(async_mode=True)
+            self.shield.disengage_fortress(async_mode=False)
         except Exception:
             pass
         event.accept()
@@ -2413,7 +2415,9 @@ class CriptexMainWindow(QMainWindow):
             "=== Aplicações de Gravação e Streaming Monitorizadas ===",
             ", ".join(sorted(STREAM_AND_RECORDING_PROCESSES.values())),
         ]
-        self.security_details_box.setPlainText("\n".join(details))
+        new_details_text = "\n".join(details)
+        if self.security_details_box.toPlainText() != new_details_text:
+            self.security_details_box.setPlainText(new_details_text)
 
 
 def run_app() -> int:
@@ -2422,4 +2426,5 @@ def run_app() -> int:
     app.setOrganizationName("Tiago Custodio")
     window = CriptexMainWindow()
     window.show()
-    return app.exec()
+    code = app.exec()
+    os._exit(code)

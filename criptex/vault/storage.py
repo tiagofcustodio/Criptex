@@ -85,6 +85,7 @@ class CriptexVaultStorage:
 
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.files_dir.mkdir(parents=True, exist_ok=True)
+        self._verified_key_cache: Dict[Tuple[str, str], bool] = {}
 
     # ------------------------------------------------------------------
     # Inicialização e Verificação da Chave Vigenère (Guardada na Pen USB)
@@ -104,6 +105,7 @@ class CriptexVaultStorage:
             return {}
 
     def save_meta(self, meta: Dict[str, Any]) -> None:
+        self._verified_key_cache.clear()
         self.meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def initialize_vault(
@@ -168,10 +170,17 @@ class CriptexVaultStorage:
         canary = meta.get("canary")
         if not canary:
             return False
+        cache_key = (canary, usb_master_key)
+        cached = self._verified_key_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
             plain = VigenereCipher.decrypt_password_str(canary, usb_master_key)
-            return plain == "CRIPTEX_VAULT_VERIFIED_OK"
+            ok = plain == "CRIPTEX_VAULT_VERIFIED_OK"
+            self._verified_key_cache[cache_key] = ok
+            return ok
         except Exception:
+            self._verified_key_cache[cache_key] = False
             return False
 
     def register_biometric_credential(

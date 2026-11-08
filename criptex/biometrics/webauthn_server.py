@@ -1006,13 +1006,18 @@ class SmartphoneBiometricServer:
     def stop(self) -> None:
         """
         Encerra o servidor HTTPS, o listener HTTP local e o processo de túnel SSH de forma
-        totalmente assíncrona para nunca bloquear ou congelar a thread da interface gráfica (Qt).
+        imediata e sem bloquear a thread da interface gráfica (Qt).
         """
         self.is_running = False
         self.tunnel_base_url = None
 
         proc = self._tunnel_proc
         self._tunnel_proc = None
+        if proc is not None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
         http_plain = self._http_plain_d
         self._http_plain_d = None
@@ -1021,12 +1026,6 @@ class SmartphoneBiometricServer:
         self._httpd = None
 
         def _async_cleanup() -> None:
-            if proc is not None:
-                try:
-                    # Nunca fechar proc.stdout antes de terminar o processo (evita deadlock no BufferedReader no Windows)
-                    proc.kill()
-                except Exception:
-                    pass
             if http_plain is not None:
                 try:
                     http_plain.shutdown()

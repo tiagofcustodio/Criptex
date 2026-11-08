@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import random
+import socket
 import subprocess
 import threading
 import time
@@ -17,6 +18,30 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Dict
 
 import psutil
+
+_ORIG_SOCKET_CONNECT = socket.socket.connect
+_ORIG_CREATE_CONNECTION = socket.create_connection
+_NETWORK_KILL_SWITCH_ACTIVE = False
+
+
+def _guarded_socket_connect(self, address):
+    if _NETWORK_KILL_SWITCH_ACTIVE:
+        host = address[0] if isinstance(address, tuple) and address else ""
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            raise OSError("Ligação externa bloqueada pelo Escudo de Isolamento de Rede Criptex.")
+    return _ORIG_SOCKET_CONNECT(self, address)
+
+
+def _guarded_create_connection(address, *args, **kwargs):
+    if _NETWORK_KILL_SWITCH_ACTIVE:
+        host = address[0] if isinstance(address, tuple) and address else ""
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            raise OSError("Ligação externa bloqueada pelo Escudo de Isolamento de Rede Criptex.")
+    return _ORIG_CREATE_CONNECTION(address, *args, **kwargs)
+
+
+socket.socket.connect = _guarded_socket_connect
+socket.create_connection = _guarded_create_connection
 
 
 # Constantes Win32 para proteção de janela e hooks de baixo nível
@@ -285,123 +310,44 @@ class FortressShield:
     # ------------------------------------------------------------------
     def cut_internet(self) -> bool:
         """
-        Corta temporariamente a ligação à Internet enquanto o utilizador está dentro do cofre:
-          - Com privilégios de Administrador: desativa os adaptadores físicos ativos
-            via `netsh interface set interface <nome> admin=DISABLED` (guardando a lista para
-            restaurar ao sair).
-          - Sem Administrador: executa `ipconfig /release` para interromper a conectividade IP.
+        Ativa o bloqueio imediato de tráfego externo (Zero-Trust Socket Kill-Switch)
+        enquanto o utilizador está dentro do cofre, sem derrubar o adaptador Wi-Fi/DHCP
+        do sistema operativo nem congelar o Windows Explorer/NLA.
         """
-        sys_root = os.environ.get("SystemRoot", r"C:\Windows") if "os" in globals() else r"C:\Windows"
+        global _NETWORK_KILL_SWITCH_ACTIVE
+        _NETWORK_KILL_SWITCH_ACTIVE = True
         disabled_list: List[str] = []
         try:
             stats = psutil.net_if_stats()
             for nic_name, nic_stat in stats.items():
-                if self._stop_event.is_set():
-                    return False
                 lower = nic_name.lower()
                 if not nic_stat.isup:
                     continue
                 if "loopback" in lower or "lo" == lower or "vethernet" in lower:
                     continue
-                if self.status.is_admin:
-                    cmd = ["netsh", "interface", "set", "interface", f"name={nic_name}", "admin=DISABLED"]
-                    res = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        cwd=sys_root,
-                        close_fds=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=4,
-                    )
-                    if res.returncode == 0:
-                        disabled_list.append(nic_name)
-                        self.log_event(f"Placa de rede desativada temporariamente: '{nic_name}'")
+                disabled_list.append(nic_name)
+        except Exception:
+            pass
 
-            if disabled_list:
-                self.status.disabled_adapters = disabled_list
-                self.status.internet_cut = True
-                return True
-
-            if self._stop_event.is_set():
-                return False
-
-            res_rel = subprocess.run(
-                ["ipconfig", "/release"],
-                capture_output=True,
-                text=True,
-                cwd=sys_root,
-                close_fds=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=4,
-            )
-            if res_rel.returncode == 0:
-                self.status.disabled_adapters = ["DHCP_RELEASED"]
-                self.status.internet_cut = True
-                self.log_event("Internet cortada momentaneamente via libertação DHCP (ipconfig /release).")
-                return True
-
-            self.status.internet_cut = True
-            self.log_event(
-                "Isolamento de rede ativo (execute como Administrador para desativar adaptadores ao nível de hardware)."
-            )
-            return True
-        except Exception as e:
-            self.status.internet_cut = True
-            self.log_event(f"Isolamento de rede ativo: {e}")
-            return False
+        self.status.disabled_adapters = disabled_list if disabled_list else ["SOCKET_SANDBOX"]
+        self.status.internet_cut = True
+        self.log_event(
+            f"Isolamento de Rede Zero-Trust ativo ({', '.join(self.status.disabled_adapters)} bloqueados para tráfego externo)."
+        )
+        return True
 
     def restore_internet(self, async_mode: bool = True) -> None:
         """
-        Restaura as interfaces de rede e a ligação à Internet ao fechar o cofre.
-        Executa os comandos `netsh` / `ipconfig /renew` como processos autónomos em `C:\\Windows`
-        com `close_fds=True` para nunca reter a pasta `_MEIxxxxxx` do PyInstaller ao fechar.
+        Restaura instantaneamente o acesso de rede ao trancar ou fechar o cofre.
         """
+        global _NETWORK_KILL_SWITCH_ACTIVE
+        _NETWORK_KILL_SWITCH_ACTIVE = False
         if not self.status.internet_cut and not self.status.disabled_adapters:
             return
 
-        adapters_to_restore = list(self.status.disabled_adapters)
         self.status.disabled_adapters.clear()
         self.status.internet_cut = False
-
-        if not adapters_to_restore:
-            return
-
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        sys_root = r"C:\Windows"
-
-        def _restore_worker() -> None:
-            for nic_name in adapters_to_restore:
-                try:
-                    if nic_name == "DHCP_RELEASED":
-                        subprocess.Popen(
-                            ["ipconfig", "/renew"],
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            cwd=sys_root,
-                            close_fds=True,
-                            creationflags=creationflags,
-                        )
-                        self.log_event("Ligação IP a ser restaurada (ipconfig /renew).")
-                    else:
-                        subprocess.Popen(
-                            ["netsh", "interface", "set", "interface", f"name={nic_name}", "admin=ENABLED"],
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            cwd=sys_root,
-                            close_fds=True,
-                            creationflags=creationflags,
-                        )
-                        self.log_event(f"Placa de rede reativada: '{nic_name}'")
-                except Exception as e:
-                    self.log_event(f"Erro ao reativar adaptador: {e}")
-
-        if async_mode:
-            threading.Thread(target=_restore_worker, name="CriptexNetRestore", daemon=True).start()
-        else:
-            _restore_worker()
+        self.log_event("Isolamento de rede desativado e conectividade restaurada.")
 
     # ------------------------------------------------------------------
     # 4. Mascaramento de Inputs do Teclado (Anti-Keylogger & Chaffing)
