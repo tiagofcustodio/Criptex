@@ -1,47 +1,88 @@
-# CRIPTEX — Cofre Digital Windows
+# CRIPTEX — Fortified Windows Digital Vault
 
-Aplicação nativa para Windows (**Python + PyQt6 + Win32 APIs**) concebida como um cofre digital de alta segurança com **Cifra de Vigenère** (para **Passwords** e **Ficheiros**), **Chave Física em Pen USB**, **Desbloqueio Biométrico via Smartphone (WebAuthn / QR Code)** com vinculação ao primeiro telemóvel utilizado, e **Isolamento Ativo de Sistema**.
-
----
-
-## Arquitetura de Segurança
-
-1. **Cifra de Vigenère Polialfabética (Passwords e Ficheiros)**
-   - **Passwords**: Cada password, título, utilizador e nota é transformado através da Cifra de Vigenère (`Mod 256` ao nível de bytes + representação Vigenère ASCII imprimível `Mod 95`), com chave expandida num anel primo de 1021 bytes via `PBKDF2-HMAC-SHA256` e assinatura `HMAC-SHA256` ([`vigenere.py`](criptex/crypto/vigenere.py)).
-   - **Ficheiros (`.crpx`)**: Todos os ficheiros importados para o cofre são modificados byte-a-byte no interior de `.criptex_vault/files/` utilizando a Cifra de Vigenère:
-     $$C_i = (P_i + K_{i \bmod L} + S_{i \bmod 32} + (i \bmod 251)) \bmod 256$$
-
-2. **Chave da Cifra Guardada numa Pen USB Física ([`usb_key.py`](criptex/security/usb_key.py))**
-   - A palavra-chave da Cifra de Vigenère é armazenada exclusivamente numa **Pen USB física** (`.criptex_usb_key.crpxkey`) e vinculada ao **Número de Série de Hardware do Volume USB** (`Win32 GetVolumeInformationW`).
-   - **Proteção contra Roubo de Smartphone**: Caso alguém utilize o telemóvel sem a Pen USB física ligada ao computador, o Criptex abre mas **todos os dados (passwords e ficheiros) permanecem encriptados**.
-
-3. **Desbloqueio Biométrico via Smartphone com Vinculação no 1.º Uso ([`webauthn_server.py`](criptex/biometrics/webauthn_server.py))**
-   - Servidor HTTPS local que apresenta um código QR exclusivo por sessão para leitura com o telemóvel na rede local (TouchID / FaceID / Impressão Digital Android via WebAuthn).
-   - **Vinculação Permanente após o 1.º Uso**: O primeiro telemóvel a ler o código QR e validar a biometria fica registado no cofre. Qualquer outro telemóvel é rejeitado.
-   - **Alteração Protegida nas Definições**: O telemóvel registado só pode ser alterado na aba **Definições & Dispositivos** no interior do cofre quando **ambos** os fatores estão presentes (desbloqueio biométrico original + Pen USB física inserida).
-
-4. **Proteções Ativas no Interior do Cofre ([`fortress.py`](criptex/security/fortress.py))**
-   - **Corte Momentâneo da Internet**: Desativa temporariamente os adaptadores de rede (`netsh interface set interface ... admin=DISABLED` / `ipconfig /release`) ao entrar no cofre e restaura a ligação ao trancar ou sair.
-   - **Mascaramento de Teclado Anti-Keylogger**: Hook `WH_KEYBOARD_LL` ao nível do sistema operativo que injeta eventos de ruído sintético (`SendInput`) para mascarar a digitação para o exterior do cofre, complementado por um **Teclado Virtual Baralhado**.
-   - **Bloqueio de Aplicações de Stream e Gravação**: Termina automaticamente processos de gravação/captura (`OBS Studio`, `Discord`, `ShareX`, `Bandicam`, `Xbox Game Bar`, `Zoom`, `Teams`, etc.) e aplica `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` na janela do cofre.
+**Author:** Tiago Custodio  
+**Platform:** Windows 10 / 11 (`Python` + `PyQt6` + `Win32 Native APIs`)  
+**UI Theme:** Liquid Frosted Glass & Mint Spotlight Edition
 
 ---
 
-## Como Executar (Sem Precisar de Python ou via Código-Fonte)
+## Overview
 
-### Opção 1: Executável Autónomo (`Criptex.exe` — Recomendado)
-Basta fazer duplo clique em **`Criptex.exe`** (ou em [Iniciar_Criptex.bat](Iniciar_Criptex.bat)).
-- **Não precisa de ter Python instalado** nem `.venv` — o `Criptex.exe` já inclui o Python, `PyQt6`, `cryptography`, `qrcode`, `psutil` e o manifesto de Administrador UAC embutidos.
+**Criptex** is a fortified Windows desktop digital vault designed by **Tiago Custodio** to protect sensitive **passwords** and **files** using a multi-layered hardware and biometric security architecture:
 
-### Opção 2: A partir do Código-Fonte ([Iniciar_Criptex.bat](Iniciar_Criptex.bat))
+1. **Polyalphabetic Vigenère Cipher Engine (`Mod 256` + `ASCII Mod 95` + `HMAC-SHA256`)** for both passwords and binary files (`.crpx`).
+2. **Physical USB Hardware Key (`.criptex_usb_key.crpxkey`)** bound to the USB drive's hardware volume serial number.
+3. **Dual-Option Biometric Authentication** — users can freely choose between:
+   - **Smartphone Biometrics (QR Code / WebAuthn)** over a secure tunnel, or
+   - **PC Fingerprint Sensor (Windows Hello / Windows Biometric Framework)**.
+4. **Active Windows Fortress Countermeasures** while the vault is open (temporary Internet cut-off, anti-keylogger keyboard masking + scrambled virtual keypad, automatic termination of screen recording/streaming apps, and `WDA_EXCLUDEFROMCAPTURE` window protection).
+5. **Automatic OS Language Detection (`i18n`)** — automatically detects the computer's native operating system language (`Português`, `English`, `Español`, `Français`, `Deutsch`, `Italiano`) via `kernel32.dll` and adapts the entire interface.
+
+---
+
+## Core Security Architecture
+
+### 1. Polyalphabetic Vigenère Cipher (Passwords & Files) — [`vigenere.py`](criptex/crypto/vigenere.py)
+- **Passwords**: Every password, title, username, and note stored in the vault is encrypted using the Vigenère Cipher (`Mod 256` byte-level stream + printable ASCII `Mod 95` representation), with keys expanded into a 1021-byte prime ring via `PBKDF2-HMAC-SHA256` and authenticated with `HMAC-SHA256`.
+- **Files (`.crpx`)**: Every file imported into the vault is transformed byte-by-byte inside `.criptex_vault/files/` using the Vigenère Cipher formula:
+  $$C_i = (P_i + K_{i \bmod L} + S_{i \bmod 32} + (i \bmod 251)) \bmod 256$$
+- **Interactive Vigenère Inspector**: Includes a dedicated mathematical inspector tab that displays step-by-step byte shifts ($P_i$, $K_i$, formula, and resulting $C_i$) and side-by-side binary hex comparisons.
+
+### 2. Physical USB Hardware Key — [`usb_key.py`](criptex/security/usb_key.py)
+- The Vigenère master key is never stored on the PC's hard drive. Instead, it is stored exclusively on a **physical USB flash drive** (`.criptex_usb_key.crpxkey`) and cryptographically bound to the drive's **Hardware Volume Serial Number** (`Win32 GetVolumeInformationW`).
+- **Stolen Biometric Device Protection**:
+  - **Biometrics + Physical USB Drive Inserted**: The vault opens and decrypts all passwords and files in real time.
+  - **Biometrics WITHOUT Physical USB Drive**: Even if someone unlocks the biometric step without the physical USB drive plugged into the PC, Criptex opens in **Restricted Encrypted Mode** — **all passwords and files remain strictly encrypted** and cannot be revealed or exported.
+
+### 3. Biometric Unlock: Smartphone QR Code OR PC Fingerprint
+Users can select their preferred biometric authentication method directly on the Lock Screen:
+- **Option A — Smartphone Biometrics via QR Code ([`webauthn_server.py`](criptex/biometrics/webauthn_server.py))**:
+  - Starts a local server and HTTPS WebAuthn tunnel, displaying a session-unique QR Code to scan with a smartphone (TouchID / FaceID / Android Fingerprint via `navigator.credentials.create` with `authenticatorAttachment: "platform"`).
+  - **First-Use Device Binding**: The first smartphone to complete biometric verification is permanently paired with the vault. Subsequent attempts from any other phone are rejected.
+- **Option B — PC Fingerprint Sensor ([`pc_biometrics.py`](criptex/biometrics/pc_biometrics.py))**:
+  - Allows unlocking the vault directly using the computer's built-in fingerprint reader via native Windows APIs (`winbio.dll` Windows Biometric Framework and `webauthn.dll` Windows Hello Platform Authenticator) bound to the PC's hardware signature.
+- **Protected Device Reset**: Changing or unlinking the registered biometric device in the **Settings & Devices** tab requires **both** the original biometric unlock and the physical USB key inserted simultaneously.
+
+### 4. Active Windows Fortress Countermeasures — [`fortress.py`](criptex/security/fortress.py)
+While the vault is unlocked, Criptex actively engages four system-level defenses:
+- **Temporary Internet Cut-Off**: Temporarily disables network interfaces (`netsh interface set interface` / `ipconfig /release`) while inside the vault and automatically restores connectivity as soon as the vault is locked or closed.
+- **Anti-Keylogger Keyboard Masking & Chaff Injection**: Installs a low-level Windows keyboard hook (`WH_KEYBOARD_LL`) that injects synthetic random noise keystrokes (`SendInput` chaff) to confuse external keyloggers, paired with a **Scrambled Virtual Keypad**.
+- **Anti-Screen Recording & Anti-Streaming Shield**: Continuously scans for and terminates recording/streaming processes (`OBS Studio`, `Discord`, `ShareX`, `Bandicam`, `Xbox Game Bar`, `Zoom`, `Teams`, `Snipping Tool`, etc.) and applies `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` so screen-capture APIs only see a black window.
+
+### 5. Automatic Computer Language Detection — [`i18n.py`](criptex/i18n.py)
+- Queries `GetUserDefaultLocaleName` and `GetUserDefaultUILanguage` (`kernel32.dll`) on startup to detect the operating system's language and automatically translates the UI (`Portuguese`, `English`, `Spanish`, `French`, `German`, and `Italian`).
+
+---
+
+## Getting Started
+
+### Option 1: Standalone Executable (`Criptex.exe` — Recommended)
+Simply double-click **`Criptex.exe`** (or run [`Iniciar_Criptex.bat`](Iniciar_Criptex.bat)).
+- **No Python installation required**: `Criptex.exe` bundles the Python runtime, `PyQt6`, `cryptography`, `qrcode`, `psutil`, and the Windows UAC Administrator manifest into a single portable executable.
+
+### Option 2: Running from Source ([`Iniciar_Criptex.bat`](Iniciar_Criptex.bat))
 ```bat
 Iniciar_Criptex.bat
 ```
-- Se o `Criptex.exe` estiver na pasta, arranca-o imediatamente.
-- Caso esteja apenas com o código-fonte num computador **sem Python instalado**, o `Iniciar_Criptex.bat` instala automaticamente o **Python 3.12** via `winget` (`winget install -e --id Python.Python.3.12`), cria o `.venv` e instala as dependências de `requirements.txt`.
+- If `Criptex.exe` is present in the root folder, it launches immediately.
+- If running from source on a PC without Python installed, `Iniciar_Criptex.bat` automatically installs **Python 3.12** via Windows `winget` (`winget install -e --id Python.Python.3.12`), creates `.venv`, and installs all dependencies from [`requirements.txt`](requirements.txt).
 
-### Recompilar o Executável (`Criptex.exe`)
-Para gerar novamente o `Criptex.exe` após alterações ao código:
+### Building `Criptex.exe` from Source
+To recompile the standalone `Criptex.exe` executable using PyInstaller:
 ```bat
 Gerar_Executavel_Criptex.bat
 ```
+
+---
+
+## Running Automated Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+---
+
+## Author & Credits
+
+Designed and developed by **Tiago Custodio**.

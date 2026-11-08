@@ -795,7 +795,7 @@ class CriptexMainWindow(QMainWindow):
         tb_layout.setContentsMargins(22, 0, 22, 0)
 
         lbl_brand = QLabel(
-            f"{tr('Criptex Security Suite  •  Liquid Glass Edition')}   •   {tr('Idioma do Sistema')}: {get_detected_language_Summary()}"
+            f"{tr('Criptex Security Suite  •  Liquid Glass Edition')}   •   by Tiago Custodio   •   {tr('Idioma do Sistema')}: {get_detected_language_Summary()}"
         )
         lbl_brand.setStyleSheet("font-size: 12px; font-weight: 600; color: #f4f1ee; letter-spacing: 0.4px;")
         self.lbl_header_status = QLabel(tr("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256"))
@@ -2403,6 +2403,7 @@ class CriptexMainWindow(QMainWindow):
 def run_app() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Criptex Security Vault")
+    app.setOrganizationName("Tiago Custodio")
     window = CriptexMainWindow()
     window.show()
     return app.exec()

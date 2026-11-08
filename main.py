@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Criptex — Ponto de Entrada Principal (Windows Desktop Vault)
+# Author: Tiago Custodio
 
 from __future__ import annotations
 
