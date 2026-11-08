@@ -1485,7 +1485,13 @@ class CriptexMainWindow(QMainWindow):
 
         btn_force_scan = QPushButton(tr("Verificar e Fechar Aplicações de Gravação / Stream Agora"))
         btn_force_scan.setObjectName("PrimaryBtn")
-        btn_force_scan.clicked.connect(lambda: self.shield.scan_and_kill_streaming_apps())
+        btn_force_scan.clicked.connect(
+            lambda: threading.Thread(
+                target=self.shield.scan_and_kill_streaming_apps,
+                name="CriptexManualStreamScan",
+                daemon=True,
+            ).start()
+        )
         l_layout.addWidget(btn_force_scan)
 
         layout.addWidget(left_card, 5)
@@ -1770,8 +1776,15 @@ class CriptexMainWindow(QMainWindow):
             "padding: 9px; font-size: 12px; font-weight: 600;"
         )
 
-        url = self.bio_server.start()
-        self._render_qr_code_url(url)
+        def _start_server_bg() -> None:
+            try:
+                url = self.bio_server.start()
+                if url:
+                    self.signals.qrUrlUpdated.emit(url)
+            except Exception as e:
+                self.signals.logMessage.emit(f"Aviso ao iniciar servidor QR: {e}")
+
+        threading.Thread(target=_start_server_bg, name="CriptexQrStartWorker", daemon=True).start()
 
     def _render_qr_code_url(self, url: str) -> None:
         if not url:
@@ -1840,13 +1853,14 @@ class CriptexMainWindow(QMainWindow):
             )
             return
 
-        self._refresh_usb_drives_list()
+        # Mudar imediatamente para o ecrã do cofre sem bloquear a thread gráfica
+        self.stack.setCurrentWidget(self.vault_screen)
         self.bio_server.stop()
 
         hwnd = int(self.winId())
-        self.shield.engage_fortress(hwnd=hwnd)
+        self.shield.engage_fortress(hwnd=hwnd, async_mode=True)
 
-        self.stack.setCurrentWidget(self.vault_screen)
+        self._refresh_usb_drives_list()
         self._sync_vault_usb_lock_state()
 
     def _sync_vault_usb_lock_state(self) -> None:
@@ -2010,24 +2024,26 @@ class CriptexMainWindow(QMainWindow):
             QMessageBox.critical(self, "Operação Bloqueada", str(e))
 
     def lock_vault(self) -> None:
-        self.shield.disengage_fortress()
+        self.stack.setCurrentWidget(self.lock_screen)
+        self.shield.disengage_fortress(async_mode=True)
         self.current_master_key = None
         self.pw_table.setRowCount(0)
         self.files_table.setRowCount(0)
         self.file_hex_inspector.clear()
-        self.lbl_header_status.setText("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256")
+        self.lbl_header_status.setText(tr("Estado: Aguardando Autenticação  •  Motor: Vigenère Mod-256 + HMAC-SHA256"))
 
         self._start_biometric_qr_session()
         self._refresh_usb_drives_list()
-        self.stack.setCurrentWidget(self.lock_screen)
 
     def closeEvent(self, event) -> None:
         try:
+            if hasattr(self, "telemetry_timer"):
+                self.telemetry_timer.stop()
             self.bio_server.stop()
-            self.shield.disengage_fortress()
+            self.shield.disengage_fortress(async_mode=True)
         except Exception:
             pass
-        super().closeEvent(event)
+        event.accept()
 
     # ==================================================================
     # OPERAÇÕES DE PASSWORDS (CIFRA DE VIGENÈRE)

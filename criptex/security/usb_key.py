@@ -119,8 +119,14 @@ class UsbKeyManager:
             raw_drives = [d for d in ctypes.wstring_at(buf, buf_len).split("\x00") if d]
 
             for root in raw_drives:
-                dtype = kernel32.GetDriveTypeW(ctypes.c_wchar_p(root))
                 is_system_drive = root.upper().startswith("C:")
+                if is_system_drive:
+                    continue
+                dtype = kernel32.GetDriveTypeW(ctypes.c_wchar_p(root))
+                # Ignorar unidades de rede (DRIVE_REMOTE) e CD-ROM para nunca bloquear quando a Internet é cortada
+                if dtype not in (DRIVE_REMOVABLE, DRIVE_FIXED):
+                    continue
+
                 key_path = Path(root) / USB_KEY_FILENAME
                 has_key = False
                 try:
@@ -128,7 +134,7 @@ class UsbKeyManager:
                 except Exception:
                     has_key = False
 
-                if dtype == DRIVE_REMOVABLE or (include_fixed_with_key and not is_system_drive and dtype == DRIVE_FIXED) or (not is_system_drive and has_key):
+                if dtype == DRIVE_REMOVABLE or (include_fixed_with_key and dtype == DRIVE_FIXED) or has_key:
                     label, serial_str, fs_name = self._get_volume_metadata(root)
                     drives.append(
                         UsbDriveInfo(

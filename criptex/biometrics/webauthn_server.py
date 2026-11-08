@@ -827,8 +827,9 @@ class SmartphoneBiometricServer:
 
         t = threading.Thread(target=_tunnel_worker, name="CriptexWebAuthnTunnel", daemon=True)
         t.start()
-        if self.preferred_port != 0:
-            self._tunnel_ready_event.wait(timeout=3.5)
+        # Nunca bloquear a thread da interface gráfica (Qt) se houver callback assíncrono on_qr_url_updated
+        if self.preferred_port != 0 and self.on_qr_url_updated is None:
+            self._tunnel_ready_event.wait(timeout=1.5)
 
     def start(self) -> str:
         """Inicia o servidor HTTPS de autenticação biométrica e devolve o URL para o QR Code."""
@@ -990,32 +991,43 @@ class SmartphoneBiometricServer:
         return self.get_qr_url()
 
     def stop(self) -> None:
+        """
+        Encerra o servidor HTTPS, o listener HTTP local e o processo de túnel SSH de forma
+        totalmente assíncrona para nunca bloquear ou congelar a thread da interface gráfica (Qt).
+        """
         self.is_running = False
-        if self._tunnel_proc is not None:
-            try:
-                if self._tunnel_proc.stdin:
-                    self._tunnel_proc.stdin.close()
-                if self._tunnel_proc.stdout:
-                    self._tunnel_proc.stdout.close()
-                self._tunnel_proc.terminate()
-            except Exception:
-                pass
-            self._tunnel_proc = None
         self.tunnel_base_url = None
-        if self._http_plain_d:
-            try:
-                self._http_plain_d.shutdown()
-                self._http_plain_d.server_close()
-            except Exception:
-                pass
+
+        proc = self._tunnel_proc
+        self._tunnel_proc = None
+
+        http_plain = self._http_plain_d
         self._http_plain_d = None
-        if self._httpd:
-            try:
-                self._httpd.shutdown()
-                self._httpd.server_close()
-            except Exception:
-                pass
+
+        httpd = self._httpd
         self._httpd = None
+
+        def _async_cleanup() -> None:
+            if proc is not None:
+                try:
+                    # Nunca fechar proc.stdout antes de terminar o processo (evita deadlock no BufferedReader no Windows)
+                    proc.kill()
+                except Exception:
+                    pass
+            if http_plain is not None:
+                try:
+                    http_plain.shutdown()
+                    http_plain.server_close()
+                except Exception:
+                    pass
+            if httpd is not None:
+                try:
+                    httpd.shutdown()
+                    httpd.server_close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_async_cleanup, name="CriptexBioServerStop", daemon=True).start()
 
     def get_qr_url(self) -> str:
         if self.tunnel_base_url:

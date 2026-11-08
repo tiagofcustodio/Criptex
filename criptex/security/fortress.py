@@ -128,6 +128,7 @@ class FortressShield:
         self.status = ShieldStatus(is_admin=self.check_is_admin())
         self._watchdog_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._chaff_event = threading.Event()
         self._hook_thread: Optional[threading.Thread] = None
         self._hook_id: Optional[int] = None
         self._hook_thread_id: Optional[int] = None
@@ -158,61 +159,69 @@ class FortressShield:
     # ------------------------------------------------------------------
     # Ativação / Desativação Global do Escudo do Cofre
     # ------------------------------------------------------------------
-    def engage_fortress(self, hwnd: Optional[int] = None) -> ShieldStatus:
+    def engage_fortress(self, hwnd: Optional[int] = None, async_mode: bool = True) -> ShieldStatus:
         """
-        Ativa imediatamente todas as contramedidas do cofre Criptex:
-          - Desliga aplicações de stream e gravação e inicia sentinela contínua
-          - Corta a Internet momentaneamente
-          - Ativa o mascaramento de teclado e anti-keylogger
+        Ativa imediatamente todas as contramedidas do cofre Criptex sem bloquear a interface gráfica (Qt):
           - Bloqueia captura de ecrã na janela do cofre (WDA_EXCLUDEFROMCAPTURE)
+          - Ativa o mascaramento de teclado e anti-keylogger
+          - Em segundo plano (async_mode=True): fecha aplicações de stream/gravação, corta a Internet
+            momentaneamente e inicia a sentinela contínua.
         """
         self.status.is_admin = self.check_is_admin()
         self.status.active = True
+        self.status.internet_cut = True
         self._stop_event.clear()
 
         self.log_event("Escudo de Segurança Criptex ativado (Isolamento de Rede, Anti-Keylogger e Anti-Stream).")
 
-        # 1. Proteção de Captura de Janela Win32 (Ecrã fica preto em OBS/PrintScreen)
+        # 1. Proteção de Captura de Janela Win32 (Ecrã fica preto em OBS/PrintScreen) — instantâneo (< 1ms)
         if hwnd:
             self._protected_hwnd = hwnd
             self.enable_window_capture_protection(hwnd)
 
-        # 2. Fechar todas as aplicações de stream e gravação
-        killed = self.scan_and_kill_streaming_apps()
-        if not killed:
-            self.log_event("Verificação anti-stream concluída: 0 processos de gravação ativos no momento.")
-
-        # 3. Cortar momentaneamente a Internet
-        self.cut_internet()
-
-        # 4. Ativar Mascaramento de Teclado Anti-Keylogger
+        # 2. Ativar Mascaramento de Teclado Anti-Keylogger — instantâneo (< 1ms)
         self.start_keyboard_masking()
 
-        # 5. Iniciar sentinela em background (monitoriza processos de gravação a cada 1.5s)
-        self._watchdog_thread = threading.Thread(
-            target=self._security_watchdog_loop,
-            name="CriptexFortressWatchdog",
-            daemon=True,
-        )
-        self._watchdog_thread.start()
+        def _heavy_engage_tasks() -> None:
+            if self._stop_event.is_set() or not self.status.active:
+                return
+            killed = self.scan_and_kill_streaming_apps()
+            if not killed:
+                self.log_event("Verificação anti-stream concluída: 0 processos de gravação ativos no momento.")
+            if self._stop_event.is_set() or not self.status.active:
+                return
+            self.cut_internet()
+            self._security_watchdog_loop()
+
+        if async_mode:
+            self._watchdog_thread = threading.Thread(
+                target=_heavy_engage_tasks,
+                name="CriptexFortressWatchdog",
+                daemon=True,
+            )
+            self._watchdog_thread.start()
+        else:
+            _heavy_engage_tasks()
 
         return self.status
 
-    def disengage_fortress(self) -> ShieldStatus:
+    def disengage_fortress(self, async_mode: bool = True) -> ShieldStatus:
         """
-        Desativa o escudo ao trancar ou sair do cofre e restaura a ligação à Internet.
+        Desativa o escudo ao trancar ou sair do cofre e restaura a ligação à Internet
+        sem bloquear nem congelar a janela principal.
         """
-        if not self.status.active:
+        if not self.status.active and not self.status.internet_cut and not self.status.keyboard_shield_active:
             return self.status
 
+        self.status.active = False
         self._stop_event.set()
+        self._chaff_event.set()
         self.stop_keyboard_masking()
-        self.restore_internet()
 
         if self._protected_hwnd:
             self.disable_window_capture_protection(self._protected_hwnd)
 
-        self.status.active = False
+        self.restore_internet(async_mode=async_mode)
         self.log_event("Cofre trancado. Escudo desativado e ligação à Internet restaurada.")
         return self.status
 
@@ -251,6 +260,8 @@ class FortressShield:
         """
         newly_terminated: List[str] = []
         for proc in psutil.process_iter(["pid", "name"]):
+            if self._stop_event.is_set():
+                break
             try:
                 pname = (proc.info.get("name") or "").lower()
                 if pname in STREAM_AND_RECORDING_PROCESSES:
@@ -258,7 +269,7 @@ class FortressShield:
                     pid = proc.info.get("pid")
                     proc.terminate()
                     try:
-                        proc.wait(timeout=1.5)
+                        proc.wait(timeout=0.25)
                     except psutil.TimeoutExpired:
                         proc.kill()
                     label = f"{friendly} (PID {pid})"
@@ -284,19 +295,21 @@ class FortressShield:
         try:
             stats = psutil.net_if_stats()
             for nic_name, nic_stat in stats.items():
+                if self._stop_event.is_set():
+                    return False
                 lower = nic_name.lower()
                 if not nic_stat.isup:
                     continue
                 if "loopback" in lower or "lo" == lower or "vethernet" in lower:
                     continue
                 if self.status.is_admin:
-                    cmd = ["netsh", "interface", "set", "interface", f'name={nic_name}', "admin=DISABLED"]
+                    cmd = ["netsh", "interface", "set", "interface", f"name={nic_name}", "admin=DISABLED"]
                     res = subprocess.run(
                         cmd,
                         capture_output=True,
                         text=True,
                         creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=6,
+                        timeout=4,
                     )
                     if res.returncode == 0:
                         disabled_list.append(nic_name)
@@ -307,12 +320,15 @@ class FortressShield:
                 self.status.internet_cut = True
                 return True
 
+            if self._stop_event.is_set():
+                return False
+
             res_rel = subprocess.run(
                 ["ipconfig", "/release"],
                 capture_output=True,
                 text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=8,
+                timeout=4,
             )
             if res_rel.returncode == 0:
                 self.status.disabled_adapters = ["DHCP_RELEASED"]
@@ -330,36 +346,52 @@ class FortressShield:
             self.log_event(f"Isolamento de rede ativo: {e}")
             return False
 
-    def restore_internet(self) -> None:
-        """Restaura as interfaces de rede e a ligação à Internet ao fechar o cofre."""
-        if not self.status.internet_cut:
+    def restore_internet(self, async_mode: bool = True) -> None:
+        """
+        Restaura as interfaces de rede e a ligação à Internet ao fechar o cofre.
+        Executa os comandos `netsh` / `ipconfig /renew` como processos autónomos em segundo plano
+        para que o fecho ou bloqueio da janela seja instantâneo e nunca congele a UI.
+        """
+        if not self.status.internet_cut and not self.status.disabled_adapters:
             return
 
-        try:
-            for nic_name in list(self.status.disabled_adapters):
-                if nic_name == "DHCP_RELEASED":
-                    subprocess.run(
-                        ["ipconfig", "/renew"],
-                        capture_output=True,
-                        text=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=12,
-                    )
-                    self.log_event("Ligação IP restaurada (ipconfig /renew).")
-                else:
-                    subprocess.run(
-                        ["netsh", "interface", "set", "interface", f"name={nic_name}", "admin=ENABLED"],
-                        capture_output=True,
-                        text=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=6,
-                    )
-                    self.log_event(f"Placa de rede reativada: '{nic_name}'")
-        except Exception as e:
-            self.log_event(f"Erro ao reativar adaptador: {e}")
-        finally:
-            self.status.disabled_adapters.clear()
-            self.status.internet_cut = False
+        adapters_to_restore = list(self.status.disabled_adapters)
+        self.status.disabled_adapters.clear()
+        self.status.internet_cut = False
+
+        if not adapters_to_restore:
+            return
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        def _restore_worker() -> None:
+            for nic_name in adapters_to_restore:
+                try:
+                    if nic_name == "DHCP_RELEASED":
+                        subprocess.Popen(
+                            ["ipconfig", "/renew"],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=creationflags,
+                        )
+                        self.log_event("Ligação IP a ser restaurada (ipconfig /renew).")
+                    else:
+                        subprocess.Popen(
+                            ["netsh", "interface", "set", "interface", f"name={nic_name}", "admin=ENABLED"],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=creationflags,
+                        )
+                        self.log_event(f"Placa de rede reativada: '{nic_name}'")
+                except Exception as e:
+                    self.log_event(f"Erro ao reativar adaptador: {e}")
+
+        if async_mode:
+            threading.Thread(target=_restore_worker, name="CriptexNetRestore", daemon=True).start()
+        else:
+            _restore_worker()
 
     # ------------------------------------------------------------------
     # 4. Mascaramento de Inputs do Teclado (Anti-Keylogger & Chaffing)
@@ -368,32 +400,47 @@ class FortressShield:
         """
         Ativa a proteção de inputs do teclado em duas camadas:
           1. Low-Level Keyboard Hook (`WH_KEYBOARD_LL`) do Windows que interceta eventos de teclas
-             enquanto o cofre está focado e injeta ruído fantasma (Keystroke Chaffing) na fila global
-             de eventos para que qualquer keylogger externo registe sequências aleatórias falsas.
+             enquanto o cofre está focado e sinaliza a thread de ruído fantasma (Keystroke Chaffing)
+             sem bloquear o callback do hook.
           2. Mascaramento direto nos campos do cofre + Teclado Virtual Baralhado Anti-Keylogger.
         """
         if self.status.keyboard_shield_active:
             return
 
         self.status.keyboard_shield_active = True
+        self._chaff_event.clear()
         self._hook_thread = threading.Thread(
             target=self._win32_keyboard_hook_worker,
             name="CriptexKeyboardMaskHook",
             daemon=True,
         )
         self._hook_thread.start()
+        threading.Thread(
+            target=self._chaff_sender_worker,
+            name="CriptexKeyboardChaffSender",
+            daemon=True,
+        ).start()
         self.log_event(
-            "⌨️ Mascaramento de Teclado Anti-Keylogger ativo (WH_KEYBOARD_LL + Injeção de Ruído Chaff para o exterior)."
+            "Mascaramento de Teclado Anti-Keylogger ativo (WH_KEYBOARD_LL + Injeção de Ruído Chaff para o exterior)."
         )
 
     def stop_keyboard_masking(self) -> None:
         self.status.keyboard_shield_active = False
-        if self._hook_thread_id:
+        self._chaff_event.set()
+        hook_id = self._hook_id
+        self._hook_id = None
+        if hook_id:
             try:
-                ctypes.windll.user32.PostThreadMessageW(self._hook_thread_id, 0x0012, 0, 0)  # WM_QUIT
+                ctypes.windll.user32.UnhookWindowsHookEx(hook_id)
             except Exception:
                 pass
+        tid = self._hook_thread_id
         self._hook_thread_id = None
+        if tid:
+            try:
+                ctypes.windll.user32.PostThreadMessageW(tid, 0x0012, 0, 0)  # WM_QUIT
+            except Exception:
+                pass
 
     def inject_external_chaff_burst(self, count: int = 3) -> str:
         """
@@ -408,10 +455,8 @@ class FortressShield:
 
     def _send_synthetic_decoy_vk(self, vk_code: int) -> None:
         """
-        Envia um evento de tecla sintético inofensivo (ex: VK_F24 = 0x87 ou Shift/Control neutro)
-        na fila de input do sistema com o marcador CRIPTEX_SYNTHETIC_MARKER para poluir
-        qualquer logger externo que monitorize `GetAsyncKeyState` ou `WH_KEYBOARD_LL` a jusante,
-        sem alterar o texto que o utilizador está a escrever no Criptex.
+        Envia um evento de tecla sintético inofensivo (ex: VK_F24 = 0x87)
+        na fila de input do sistema com o marcador CRIPTEX_SYNTHETIC_MARKER.
         """
         try:
             inp_down = INPUT()
@@ -437,12 +482,27 @@ class FortressShield:
         except Exception:
             pass
 
+    def _chaff_sender_worker(self) -> None:
+        """
+        Thread dedicada para enviar eventos de ruído sintético fora do callback `WH_KEYBOARD_LL`,
+        evitando reentrância no hook do Windows e garantindo latência zero na digitação.
+        """
+        while not self._stop_event.is_set() and self.status.keyboard_shield_active:
+            if not self._chaff_event.wait(timeout=0.5):
+                continue
+            self._chaff_event.clear()
+            if self._stop_event.is_set() or not self.status.keyboard_shield_active:
+                break
+            for _ in range(random.randint(2, 4)):
+                decoy_vk = random.choice([0x84, 0x85, 0x86, 0x87])
+                self._send_synthetic_decoy_vk(decoy_vk)
+                self.status.chaff_injected_count += 1
+
     def _win32_keyboard_hook_worker(self) -> None:
         """
         Instala um hook `WH_KEYBOARD_LL` no Windows. Sempre que uma tecla real é premida
-        enquanto a janela do cofre Criptex está ativa, dispara eventos fantasma (VK_F21..VK_F24)
-        com intervalos temporais aleatórios para mascarar tanto o conteúdo como a cadência
-        de digitação (keystroke dynamics) para o exterior do cofre.
+        enquanto a janela do cofre Criptex está ativa, aciona `_chaff_event` de forma
+        não-bloqueante para injetar ruído sintético sem atrasar a fila de eventos do Windows.
         """
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
@@ -459,19 +519,14 @@ class FortressShield:
             try:
                 if nCode == HC_ACTION and (wParam == WM_KEYDOWN or wParam == WM_SYSKEYDOWN):
                     kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                    # Ignorar os nossos próprios eventos de ruído sintético
                     if kb.dwExtraInfo != self.CRIPTEX_SYNTHETIC_MARKER:
                         fg_hwnd = user32.GetForegroundWindow()
                         if self._protected_hwnd and fg_hwnd == self._protected_hwnd:
                             self.status.masked_keystrokes_count += 1
-                            # Injetar 2 a 4 sinais de ruído sintético (VK_F21..VK_F24: 0x84..0x87)
-                            for _ in range(random.randint(2, 4)):
-                                decoy_vk = random.choice([0x84, 0x85, 0x86, 0x87])
-                                self._send_synthetic_decoy_vk(decoy_vk)
-                                self.status.chaff_injected_count += 1
+                            self._chaff_event.set()
             except Exception:
                 pass
-            return user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+            return user32.CallNextHookEx(self._hook_id or 0, nCode, wParam, lParam)
 
         # Manter referência viva ao callback C para não ser recolhido pelo GC
         self._c_hook_proc = HOOKPROC(low_level_handler)
@@ -487,7 +542,10 @@ class FortressShield:
             user32.DispatchMessageW(ctypes.byref(msg))
 
         if self._hook_id:
-            user32.UnhookWindowsHookEx(self._hook_id)
+            try:
+                user32.UnhookWindowsHookEx(self._hook_id)
+            except Exception:
+                pass
             self._hook_id = None
 
     # ------------------------------------------------------------------
@@ -495,8 +553,11 @@ class FortressShield:
     # ------------------------------------------------------------------
     def _security_watchdog_loop(self) -> None:
         while not self._stop_event.is_set() and self.status.active:
+            if self._stop_event.wait(2.5):
+                break
+            if not self.status.active:
+                break
             try:
                 self.scan_and_kill_streaming_apps()
             except Exception:
                 pass
-            self._stop_event.wait(1.5)
