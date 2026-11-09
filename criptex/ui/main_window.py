@@ -14,6 +14,7 @@ import ctypes
 import io
 import os
 import random
+import secrets
 import string
 import sys
 import threading
@@ -1299,6 +1300,13 @@ class CriptexMainWindow(QMainWindow):
         sec_row.addWidget(btn_vk_pw)
         f_layout.addLayout(sec_row)
 
+        self.btn_gen_secure_pw = QPushButton(tr("Gerar Password Segura"))
+        self.btn_gen_secure_pw.setToolTip(
+            tr("Gerar uma password criptograficamente segura (20 caracteres) e preencher automaticamente")
+        )
+        self.btn_gen_secure_pw.clicked.connect(self._generate_secure_password_for_form)
+        f_layout.addWidget(self.btn_gen_secure_pw)
+
         f_layout.addWidget(QLabel(tr("Pré-visualização da Cifra de Vigenère:")))
         self.lbl_live_vig_preview = QLabel(tr("A aguardar introdução..."))
         self.lbl_live_vig_preview.setWordWrap(True)
@@ -2356,6 +2364,37 @@ class CriptexMainWindow(QMainWindow):
         dlg = ScrambledVirtualKeypadDialog(self.pw_secret_edit.text(), self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.pw_secret_edit.setText(dlg.get_value())
+
+    def _generate_secure_password_for_form(self) -> None:
+        upper = string.ascii_uppercase
+        lower = string.ascii_lowercase
+        digits = string.digits
+        symbols = "!@#$%^&*()-_=+[]{}?"
+        all_chars = upper + lower + digits + symbols
+
+        # Garantir pelo menos 2 caracteres de cada categoria + preencher até 20 caracteres com CSPRNG (secrets)
+        pw_chars = [
+            secrets.choice(upper),
+            secrets.choice(upper),
+            secrets.choice(lower),
+            secrets.choice(lower),
+            secrets.choice(digits),
+            secrets.choice(digits),
+            secrets.choice(symbols),
+            secrets.choice(symbols),
+        ] + [secrets.choice(all_chars) for _ in range(12)]
+        secrets.SystemRandom().shuffle(pw_chars)
+        generated_pw = "".join(pw_chars)
+
+        self.pw_secret_edit.setText(generated_pw)
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(generated_pw)
+
+        self.lbl_revealed_box.setText(
+            f"Password Segura Gerada (20 caracteres • Copiada para a Área de Transferência):\n{generated_pw}"
+        )
+        self._append_security_log("Password segura de 20 caracteres (CSPRNG) gerada e preenchida no formulário.")
 
     def _on_chaff_generated(self, real_char_masked: str, fake_outside: str) -> None:
         st = self.shield.status

@@ -329,6 +329,20 @@ _TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "de": "Neues Passwort hinzufügen",
         "it": "Aggiungi Nuova Password",
     },
+    "Gerar Password Segura": {
+        "en": "Generate Secure Password",
+        "es": "Generar Contraseña Segura",
+        "fr": "Générer un mot de passe sécurisé",
+        "de": "Sicheres Passwort generieren",
+        "it": "Genera Password Sicura",
+    },
+    "Gerar uma password criptograficamente segura (20 caracteres) e preencher automaticamente": {
+        "en": "Generate a cryptographically secure password (20 chars) and auto-fill",
+        "es": "Generar una contraseña criptográficamente segura (20 caracteres) y rellenar automáticamente",
+        "fr": "Générer un mot de passe cryptographiquement sûr (20 caractères) et remplir automatiquement",
+        "de": "Kryptografisch sicheres Passwort (20 Zeichen) generieren und automatisch ausfüllen",
+        "it": "Genera una password crittograficamente sicura (20 caratteri) e compila automaticamente",
+    },
     "Cifrar com Chave USB e Guardar": {
         "en": "Encrypt with USB Key & Save",
         "es": "Cifrar con Clave USB y Guardar",
