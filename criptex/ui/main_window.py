@@ -2061,10 +2061,10 @@ class CriptexMainWindow(QMainWindow):
     # ==================================================================
     def _update_live_vigenere_pw_preview(self, text: str) -> None:
         if not text:
-            self.lbl_live_vig_preview.setText("A aguardar introdução...")
+            self.lbl_live_vig_preview.setText(tr("A aguardar introdução..."))
             return
         if not self.current_master_key:
-            self.lbl_live_vig_preview.setText("Insira a Pen USB física para cifrar com a sua chave Vigenère.")
+            self.lbl_live_vig_preview.setText(tr("Insira a Pen USB física para cifrar com a sua chave Vigenère."))
             return
         ascii_vig = VigenereCipher.classic_alphabetic_vigenere(text, self.current_master_key, decrypt=False)
         insp = VigenereCipher.inspect_transformation(text, self.current_master_key, max_steps=8)
@@ -2099,8 +2099,8 @@ class CriptexMainWindow(QMainWindow):
         if not self.current_master_key:
             QMessageBox.critical(
                 self,
-                "Pen USB Necessária",
-                "Não é possível cifrar novas passwords sem a Pen USB física ligada ao computador.",
+                tr("Pen USB Necessária"),
+                tr("Não é possível cifrar novas passwords sem a Pen USB física ligada ao computador."),
             )
             return
         title = self.pw_title_edit.text().strip()
@@ -2110,7 +2110,7 @@ class CriptexMainWindow(QMainWindow):
         notes = self.pw_notes_edit.text().strip()
 
         if not title or not secret:
-            QMessageBox.warning(self, "Campos Obrigatórios", "Preencha pelo menos o Título e a Password.")
+            QMessageBox.warning(self, tr("Campos Obrigatórios"), tr("Preencha pelo menos o Título e a Password."))
             return
 
         entry = self.vault_storage.add_password(
@@ -2392,9 +2392,9 @@ class CriptexMainWindow(QMainWindow):
             clipboard.setText(generated_pw)
 
         self.lbl_revealed_box.setText(
-            f"Password Segura Gerada (20 caracteres • Copiada para a Área de Transferência):\n{generated_pw}"
+            f"{tr('Password Segura Gerada (20 caracteres • Copiada para a Área de Transferência):')}\n{generated_pw}"
         )
-        self._append_security_log("Password segura de 20 caracteres (CSPRNG) gerada e preenchida no formulário.")
+        self._append_security_log(tr("Password segura de 20 caracteres (CSPRNG) gerada e preenchida no formulário."))
 
     def _on_chaff_generated(self, real_char_masked: str, fake_outside: str) -> None:
         st = self.shield.status
