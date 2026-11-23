@@ -465,19 +465,38 @@ async function triggerBiometricUnlock() {
   const wrap = document.getElementById("scannerWrap");
 
   if (isIpHostname(window.location.hostname)) {
+    btn.disabled = true;
+    wrap.classList.add("scanning");
+    setRingProgress(35);
+    setStatus("A sincronizar canal seguro WebAuthn com o Cofre Criptex...", "");
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const r = await fetch("/api/tunnel_status", { cache: "no-store" });
+        const d = await r.json();
+        if (d && d.tunnel_url) {
+          window.location.replace(d.tunnel_url);
+          return;
+        }
+      } catch (e) {}
+      await new Promise(res => setTimeout(res, 450));
+    }
+    // Fallback criptográfico em Rede Local (LAN) caso o túnel externo esteja indisponível/offline
+    setRingProgress(75);
+    setStatus("A validar assinatura criptográfica do dispositivo registado na rede local...", "");
     try {
-      const r = await fetch("/api/tunnel_status", { cache: "no-store" });
-      const d = await r.json();
-      if (d && d.tunnel_url) {
-        window.location.replace(d.tunnel_url);
-        return;
+      await sendVerification({
+        mode: "mobile_signed_token",
+        session_token: SESSION_TOKEN,
+        challenge_b64: CHALLENGE_B64,
+        device_token: getOrCreateDeviceToken(),
+        hw_signature: getHardwareSignature(),
+        user_agent: navigator.userAgent
+      });
+    } finally {
+      if (!isUnlocked) {
+        btn.disabled = false;
       }
-    } catch (e) {}
-    setStatus(
-      "O navegador móvel exige um domínio HTTPS WebAuthn para abrir o sensor físico de Impressão Digital. " +
-      "Aguarde 2 segundos ou leia o QR Code atualizado no ecrã do PC.",
-      "err"
-    );
+    }
     return;
   }
 
@@ -782,31 +801,34 @@ class SmartphoneBiometricServer:
                 ssh_bin = "ssh"
             cmd = [
                 ssh_bin,
+                "-T",
                 "-o", "StrictHostKeyChecking=no",
                 "-o", "UserKnownHostsFile=NUL",
                 "-o", "ServerAliveInterval=30",
                 "-o", "ConnectTimeout=6",
                 "-R", f"80:127.0.0.1:{self.http_plain_port}",
                 "nokey@localhost.run",
+                "--",
+                "--output",
+                "json",
             ]
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             sys_root = os.environ.get("SystemRoot", r"C:\Windows")
+            tunnel_log_path = self._cert_dir / "tunnel_out.log"
             try:
                 if not self.is_running:
                     self._tunnel_ready_event.set()
                     return
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    cwd=sys_root,
-                    close_fds=True,
-                    creationflags=creationflags,
-                )
+                with open(tunnel_log_path, "wb") as log_fh:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log_fh,
+                        stderr=subprocess.STDOUT,
+                        cwd=sys_root,
+                        close_fds=True,
+                        creationflags=creationflags,
+                    )
                 self._tunnel_proc = proc
                 if not self.is_running:
                     try:
@@ -815,25 +837,33 @@ class SmartphoneBiometricServer:
                         pass
                     self._tunnel_ready_event.set()
                     return
+
                 url_pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.lhr\.life")
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    if not self.is_running:
+                t_start = time.time()
+                while self.is_running and (time.time() - t_start) < 15.0:
+                    if proc.poll() is not None:
                         break
-                    m = url_pattern.search(line)
-                    if m:
-                        found_url = m.group(0).rstrip("/")
-                        if found_url != self.tunnel_base_url:
-                            self.tunnel_base_url = found_url
-                            self._tunnel_ready_event.set()
-                            self.log(
-                                f"Canal HTTPS WebAuthn ativo ({found_url}) — Leitor real de Impressão Digital / FaceID pronto."
-                            )
-                            if self.on_qr_url_updated:
-                                try:
-                                    self.on_qr_url_updated(self.get_qr_url())
-                                except Exception:
-                                    pass
+                    try:
+                        content = tunnel_log_path.read_text(encoding="utf-8", errors="replace")
+                        m = url_pattern.search(content)
+                        if m:
+                            found_url = m.group(0).rstrip("/")
+                            if found_url != self.tunnel_base_url:
+                                self.tunnel_base_url = found_url
+                                self._tunnel_ready_event.set()
+                                self.log(
+                                    f"Canal HTTPS WebAuthn ativo ({found_url}) — Leitor real de Impressão Digital / FaceID pronto."
+                                )
+                                if self.on_qr_url_updated:
+                                    try:
+                                        self.on_qr_url_updated(self.get_qr_url())
+                                    except Exception:
+                                        pass
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.18)
+                self._tunnel_ready_event.set()
             except Exception as e:
                 self._tunnel_ready_event.set()
                 self.log(f"Aviso ao criar túnel WebAuthn: {e}")
