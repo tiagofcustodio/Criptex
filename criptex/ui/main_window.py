@@ -25,6 +25,7 @@ from typing import Optional, List, Tuple
 import qrcode
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF
 from PyQt6.QtGui import (
+    QIcon,
     QImage,
     QPixmap,
     QKeyEvent,
@@ -748,11 +749,32 @@ class BridgeSignals(QObject):
     logMessage = pyqtSignal(str)
 
 
+def _resolve_app_icon_path() -> Optional[Path]:
+    """Localiza o ícone oficial do Criptex tanto em modo Python como empacotado em PyInstaller (.exe)."""
+    candidates: List[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "assets" / "criptex_icon.ico")
+        candidates.append(Path(meipass) / "assets" / "criptex_icon.png")
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    candidates.append(root_dir / "assets" / "criptex_icon.ico")
+    candidates.append(root_dir / "assets" / "criptex_icon.png")
+    candidates.append(Path.cwd() / "assets" / "criptex_icon.ico")
+    candidates.append(Path.cwd() / "assets" / "criptex_icon.png")
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 class CriptexMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Criptex")
         self.resize(1280, 840)
+        icon_path = _resolve_app_icon_path()
+        if icon_path is not None:
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.setStyleSheet(ENTERPRISE_SECURITY_QSS)
         self._apply_windows_dwm_glass()
 
@@ -2461,9 +2483,16 @@ class CriptexMainWindow(QMainWindow):
 
 
 def run_app() -> int:
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TiagoCustodio.Criptex.Vault.1")
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName("Criptex Security Vault")
     app.setOrganizationName("Tiago Custodio")
+    icon_path = _resolve_app_icon_path()
+    if icon_path is not None:
+        app.setWindowIcon(QIcon(str(icon_path)))
     window = CriptexMainWindow()
     window.show()
     return app.exec()

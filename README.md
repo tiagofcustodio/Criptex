@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/criptex_icon.png" alt="Criptex Vault Icon" width="140" />
+</p>
+
 # CRIPTEX — Fortified Windows Digital Vault
 
 **Author:** Tiago Custodio  
